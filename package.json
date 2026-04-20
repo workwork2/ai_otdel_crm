@@ -1,0 +1,16 @@
+{
+  "name": "linearize-ai-workspace",
+  "private": true,
+  "workspaces": [
+    "apps/user-dashboard",
+    "apps/super-admin"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w user-dashboard",
+    "start": "npm run start -w user-dashboard",
+    "dev:user": "npm run dev -w user-dashboard",
+    "dev:admin": "npm run dev -w super-admin",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present"
+  }
+}

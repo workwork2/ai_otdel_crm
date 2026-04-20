@@ -1,0 +1,36 @@
+import type { Metadata, Viewport } from 'next';
+import { Inter } from 'next/font/google';
+import { SuperAdminShell } from '@/components/shell/SuperAdminShell';
+import './globals.css';
+import './shell.scss';
+import './super-theme.css';
+
+const inter = Inter({
+  subsets: ['latin', 'cyrillic'],
+  variable: '--font-inter',
+  display: 'swap',
+});
+
+export const metadata: Metadata = {
+  title: 'Super Admin — AI Отдел',
+  description: 'Control plane: MRR, tenants, AI, мониторинг.',
+  robots: { index: false, follow: false },
+};
+
+export const viewport: Viewport = {
+  themeColor: '#0c0a09',
+  width: 'device-width',
+  initialScale: 1,
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="ru" className={`${inter.variable} h-full`}>
+      <body
+        className={`${inter.className} antialiased sa-mesh text-zinc-300 h-full overflow-hidden`}
+      >
+        <SuperAdminShell>{children}</SuperAdminShell>
+      </body>
+    </html>
+  );
+}
