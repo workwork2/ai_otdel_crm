@@ -1,8 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutGrid,
   Users,
@@ -22,6 +22,8 @@ import { cn } from '@/lib/utils';
 import { ImpersonationBanner } from '@/components/shell/ImpersonationBanner';
 import type { PlanEntitlements } from '@/context/SubscriptionContext';
 import { useSubscriptionOptional } from '@/context/SubscriptionContext';
+import { getApiBaseUrl } from '@/lib/backend-api';
+import { clearTenantSession, getTenantJwt } from '@/lib/tenant-auth';
 
 type NavItem = {
   href: string;
@@ -66,7 +68,19 @@ const navGroups: { title: string; items: NavItem[] }[] = [
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const sub = useSubscriptionOptional();
+  const [showLogout, setShowLogout] = useState(false);
+  useEffect(() => {
+    setShowLogout(!!getTenantJwt());
+  }, [pathname]);
+  const apiOn = !!getApiBaseUrl();
+  const s = sub?.subscription;
+  const showSubBanner =
+    apiOn &&
+    !sub?.loading &&
+    s &&
+    (s.isExpired || (typeof s.daysRemaining === 'number' && s.daysRemaining <= 7));
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/';
@@ -90,7 +104,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        <div className="flex justify-end items-center min-w-0 pr-1">
+        <div className="flex justify-end items-center gap-2 min-w-0 pr-1">
           {!sub?.loading && sub?.subscription ? (
             <span
               className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md border border-violet-500/35 text-violet-300 truncate max-w-[min(160px,28vw)]"
@@ -99,10 +113,49 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               {sub.subscription.planLabel}
             </span>
           ) : null}
+          {showLogout ? (
+            <button
+              type="button"
+              onClick={() => {
+                clearTenantSession();
+                router.replace('/login');
+              }}
+              className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500 hover:text-zinc-300 px-2 py-1 rounded border border-zinc-800"
+            >
+              Выйти
+            </button>
+          ) : null}
         </div>
       </header>
 
       <ImpersonationBanner />
+
+      {showSubBanner ? (
+        <div
+          className={
+            s?.isExpired
+              ? 'shrink-0 border-b border-red-500/40 bg-red-950/50 px-4 py-2.5 text-center text-sm text-red-100'
+              : 'shrink-0 border-b border-amber-500/35 bg-amber-950/40 px-4 py-2.5 text-center text-sm text-amber-100'
+          }
+        >
+          {s?.isExpired ? (
+            <>
+              Срок подписки истёк — часть функций может быть ограничена.{' '}
+              <Link href="/billing" className="font-semibold underline underline-offset-2 text-white">
+                Продлить тариф
+              </Link>
+            </>
+          ) : (
+            <>
+              До окончания подписки осталось{' '}
+              <span className="font-semibold tabular-nums">{s?.daysRemaining}</span> дн.{' '}
+              <Link href="/billing" className="font-semibold underline underline-offset-2 text-white">
+                Управление тарифом
+              </Link>
+            </>
+          )}
+        </div>
+      ) : null}
 
       <div className="flex flex-1 min-h-0 min-w-0 flex-col md:flex-row md:items-stretch">
         <aside className="flex flex-col min-h-0 w-full md:w-[288px] md:shrink-0 md:h-full md:self-stretch border-b md:border-b-0 md:border-r border-[#1f1f22] bg-[#0a0a0c] overflow-hidden">

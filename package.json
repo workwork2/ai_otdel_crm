@@ -11,12 +11,20 @@
     "start": "npm run start -w user-dashboard",
     "dev:user": "npm run dev -w user-dashboard",
     "dev:admin": "npm run dev -w super-admin",
-    "dev:api": "npm run start:dev -w api",
+    "db:reset": "node scripts/reset-db.mjs",
+    "api:free-port": "lsof -ti :3333 | xargs kill 2>/dev/null || true",
+    "dev:api": "npm run api:free-port && node scripts/pg-ping.mjs && npm run start:dev -w api",
+    "dev:full": "concurrently -n api,user,admin -c blue,cyan,magenta \"npm run dev:api\" \"npm run dev:user\" \"npm run dev:admin\"",
     "build": "npm run build --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up --build",
     "docker:up:detached": "docker compose up --build -d",
-    "docker:down": "docker compose down"
+    "docker:down": "docker compose down",
+    "postgres:up": "docker compose up postgres -d",
+    "postgres:stop": "docker compose stop postgres"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
   }
 }

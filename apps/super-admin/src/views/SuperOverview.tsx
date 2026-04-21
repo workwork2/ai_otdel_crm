@@ -4,7 +4,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { TrendingUp, MessageSquare, DollarSign, Sparkles, PieChart, ArrowUpRight } from 'lucide-react';
 import { getApiBaseUrl, superFetchHeaders } from '@/lib/backend-api';
-import { SUPER_GLOBAL_METRICS } from '@/lib/superAdminData';
 import { cn } from '@/lib/utils';
 
 function fmtRub(n: number) {
@@ -17,25 +16,58 @@ function fmtUsd(n: number) {
   return `$ ${n.toLocaleString('en-US')}`;
 }
 
-type Metrics = typeof SUPER_GLOBAL_METRICS;
+type Metrics = {
+  totalMrrRub: number;
+  totalMessagesGenerated: number;
+  apiClaudeSpendUsd: number;
+  totalGeneratedRevenueRub: number;
+  activeTenants: number;
+  frozenTenants: number;
+};
+
+const ZERO_METRICS: Metrics = {
+  totalMrrRub: 0,
+  totalMessagesGenerated: 0,
+  apiClaudeSpendUsd: 0,
+  totalGeneratedRevenueRub: 0,
+  activeTenants: 0,
+  frozenTenants: 0,
+};
+
+type TicketRow = { status?: string };
 
 export function SuperOverview() {
   const apiBase = getApiBaseUrl();
-  const [m, setM] = useState<Metrics>(SUPER_GLOBAL_METRICS);
+  const [m, setM] = useState<Metrics>(ZERO_METRICS);
+  const [supportOpenCount, setSupportOpenCount] = useState(0);
 
   const load = useCallback(async () => {
     if (!apiBase) {
-      setM(SUPER_GLOBAL_METRICS);
+      setM(ZERO_METRICS);
+      setSupportOpenCount(0);
       return;
     }
     try {
-      const r = await fetch(`${apiBase}/v1/super/metrics`, { headers: superFetchHeaders() });
-      if (r.ok) {
-        const data = (await r.json()) as Metrics;
-        if (data && typeof data === 'object') setM({ ...SUPER_GLOBAL_METRICS, ...data });
+      const [rMetrics, rTickets] = await Promise.all([
+        fetch(`${apiBase}/v1/super/metrics`, { headers: superFetchHeaders() }),
+        fetch(`${apiBase}/v1/super/support-tickets`, { headers: superFetchHeaders() }),
+      ]);
+      if (rMetrics.ok) {
+        const data = (await rMetrics.json()) as Partial<Metrics>;
+        if (data && typeof data === 'object') setM({ ...ZERO_METRICS, ...data });
+        else setM(ZERO_METRICS);
+      } else {
+        setM(ZERO_METRICS);
       }
+      if (rTickets.ok) {
+        const rows = (await rTickets.json()) as TicketRow[];
+        if (Array.isArray(rows)) {
+          setSupportOpenCount(rows.filter((t) => t.status !== 'resolved').length);
+        } else setSupportOpenCount(0);
+      } else setSupportOpenCount(0);
     } catch {
-      /* ignore */
+      setM(ZERO_METRICS);
+      setSupportOpenCount(0);
     }
   }, [apiBase]);
 
@@ -96,6 +128,13 @@ export function SuperOverview() {
         <p className="text-sm text-zinc-300 leading-relaxed">
           Активных организаций: <strong className="text-white">{m.activeTenants}</strong>, заморожено:{' '}
           <strong className="text-white">{m.frozenTenants}</strong>.
+          {supportOpenCount > 0 ? (
+            <>
+              {' '}
+              Открытых обращений в поддержку:{' '}
+              <strong className="text-amber-300">{supportOpenCount}</strong>.
+            </>
+          ) : null}
         </p>
         <div className="flex flex-wrap gap-3 mt-4">
           <Link

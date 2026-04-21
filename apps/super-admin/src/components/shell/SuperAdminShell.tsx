@@ -1,25 +1,21 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
   Building2,
   Brain,
   Activity,
   Shield,
-  ArrowLeft,
   UserPlus,
   Headphones,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { cn } from '@/lib/utils';
-
-const USER_APP =
-  typeof process !== 'undefined' && process.env.NEXT_PUBLIC_USER_APP_URL
-    ? process.env.NEXT_PUBLIC_USER_APP_URL.replace(/\/$/, '')
-    : 'http://localhost:3000';
+import { getApiBaseUrl } from '@/lib/backend-api';
+import { clearPlatformJwt, getPlatformJwt } from '@/lib/platform-auth';
 
 const navGroups = [
   {
@@ -48,6 +44,21 @@ const navGroups = [
 
 export function SuperAdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [jwtPresent, setJwtPresent] = React.useState(false);
+
+  useEffect(() => {
+    setJwtPresent(!!getPlatformJwt());
+  }, [pathname]);
+
+  useEffect(() => {
+    if (pathname === '/login') return;
+    const api = getApiBaseUrl();
+    if (!api) return;
+    if (!getPlatformJwt()) {
+      router.replace('/login');
+    }
+  }, [pathname, router]);
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/';
@@ -57,13 +68,14 @@ export function SuperAdminShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-col h-[100dvh] w-full overflow-hidden font-sans">
       <header className="sa-header min-h-[52px] grid grid-cols-[1fr_auto_1fr] items-center px-3 sm:px-5 py-2 shrink-0 select-none z-50">
-        <a
-          href={USER_APP}
-          className="flex items-center gap-2 text-[11px] sm:text-xs text-amber-500/95 hover:text-amber-300 min-w-0 justify-self-start transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4 shrink-0" />
-          <span className="truncate hidden sm:inline font-medium">Панель клиента</span>
-        </a>
+        <div className="justify-self-start min-w-0 max-w-[min(100%,14rem)]">
+          <span className="hidden sm:block text-[10px] uppercase tracking-widest text-zinc-600 font-semibold leading-tight">
+            Отдельно от CRM
+          </span>
+          <span className="hidden sm:block text-[10px] text-zinc-500 mt-0.5">
+            Вход клиентов — только через «Все организации»
+          </span>
+        </div>
 
         <div className="flex justify-center min-w-0">
           <div className="flex items-center gap-2.5 rounded-xl border border-amber-500/25 bg-gradient-to-br from-amber-950/50 to-zinc-950/80 px-4 sm:px-6 py-2 shadow-[0_0_40px_-8px_rgba(245,158,11,0.25)] max-w-[min(100vw-8rem,380px)]">
@@ -81,7 +93,21 @@ export function SuperAdminShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        <div aria-hidden className="min-w-0" />
+        <div className="flex justify-end items-center gap-2 min-w-0">
+          {jwtPresent ? (
+            <button
+              type="button"
+              onClick={() => {
+                clearPlatformJwt();
+                setJwtPresent(false);
+                router.replace('/login');
+              }}
+              className="text-[10px] sm:text-xs text-zinc-500 hover:text-amber-200 px-2 py-1 rounded border border-zinc-700/80"
+            >
+              Выйти
+            </button>
+          ) : null}
+        </div>
       </header>
 
       <div className="flex flex-1 min-h-0 min-w-0 flex-col md:flex-row md:items-stretch">

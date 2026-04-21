@@ -539,3 +539,58 @@ body {
     border-radius: 99px;
   }
 }
+
+/* Единая область контента: влезает на узких экранах, ограничение ширины на широких */
+.crm-page {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  padding: clamp(1rem, 2.5vw, 2rem) clamp(1rem, 3.5vw, 2.5rem);
+}
+
+.crm-page--narrow {
+  max-width: 48rem;
+}
+
+.crm-page--std {
+  max-width: 80rem;
+}
+
+.crm-page--wide {
+  max-width: 100rem;
+}
+
+/* Заголовки страниц (типографика) */
+.crm-page-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: $text-dim;
+  margin: 0 0 0.5rem;
+}
+
+.crm-page-h1 {
+  font-size: clamp(1.375rem, 3.2vw, 1.875rem);
+  font-weight: 600;
+  color: $white;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.crm-page-lead {
+  font-size: clamp(0.875rem, 1.8vw, 0.9375rem);
+  color: $text-muted;
+  line-height: 1.6;
+  max-width: 52rem;
+  margin: 0.5rem 0 0;
+}

@@ -4,12 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Brain, AlertTriangle, Save } from 'lucide-react';
 import { getApiBaseUrl, jsonSuperHeaders, superFetchHeaders } from '@/lib/backend-api';
 import { cn } from '@/lib/utils';
-import {
-  AI_ERROR_LOGS,
-  DEFAULT_MASTER_PROMPT,
-  MASTER_PROMPT_KEY,
-  type AIErrorLogRow,
-} from '@/lib/superAdminData';
+import { DEFAULT_MASTER_PROMPT, MASTER_PROMPT_KEY, type AIErrorLogRow } from '@/lib/superAdminData';
 
 const KIND_LABEL: Record<AIErrorLogRow['kind'], string> = {
   hallucination: 'Галлюцинация',
@@ -22,21 +17,23 @@ export function SuperAIHub() {
   const apiBase = getApiBaseUrl();
   const [prompt, setPrompt] = useState(DEFAULT_MASTER_PROMPT);
   const [saved, setSaved] = useState(false);
-  const [aiLogs, setAiLogs] = useState<AIErrorLogRow[]>(AI_ERROR_LOGS);
+  const [aiLogs, setAiLogs] = useState<AIErrorLogRow[]>([]);
 
   const refreshLogs = useCallback(async () => {
     if (!apiBase) {
-      setAiLogs(AI_ERROR_LOGS);
+      setAiLogs([]);
       return;
     }
     try {
       const r = await fetch(`${apiBase}/v1/super/ai-errors`, { headers: superFetchHeaders() });
       if (r.ok) {
         const data = (await r.json()) as AIErrorLogRow[];
-        if (Array.isArray(data)) setAiLogs(data);
+        setAiLogs(Array.isArray(data) ? data : []);
+      } else {
+        setAiLogs([]);
       }
     } catch {
-      /* ignore */
+      setAiLogs([]);
     }
   }, [apiBase]);
 

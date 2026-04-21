@@ -11,8 +11,10 @@ export function getApiBaseUrl(): string | null {
 
 export function superFetchHeaders(): HeadersInit {
   const h: Record<string, string> = {};
-  const key = process.env.NEXT_PUBLIC_SUPER_ADMIN_KEY?.trim();
-  if (key) h['X-Super-Admin-Key'] = key;
+  if (typeof window !== 'undefined') {
+    const jwt = sessionStorage.getItem('linearize_platform_jwt');
+    if (jwt) h['Authorization'] = `Bearer ${jwt}`;
+  }
   return h;
 }
 

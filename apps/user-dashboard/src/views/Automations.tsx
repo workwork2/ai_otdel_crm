@@ -216,14 +216,14 @@ export function Automations() {
   );
 
   return (
-    <div className="flex-1 overflow-y-auto w-full max-w-6xl mx-auto px-10 py-10 space-y-8 fade-in">
+    <div className="crm-page crm-page--std custom-scrollbar space-y-6 sm:space-y-8 fade-in">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-semibold text-white tracking-tight flex items-center gap-3">
-            <Sparkles className="w-8 h-8 text-[#3b82f6]" />
-            Автоматизация и сценарии
+        <div className="min-w-0">
+          <h1 className="crm-page-h1 flex items-center gap-3 flex-wrap">
+            <Sparkles className="w-7 h-7 sm:w-8 sm:h-8 text-[#3b82f6] shrink-0" />
+            <span>Автоматизация и сценарии</span>
           </h1>
-          <p className="text-[#a1a1aa] mt-2 text-[15px] max-w-2xl">
+          <p className="crm-page-lead max-w-2xl">
             Включайте сценарии в один клик: ИИ подбирает аудиторию, время и формулировки. Ниже — готовые
             узлы для e-commerce, сервиса и B2B.
             {apiBase ? ' Состояние переключателей сохраняется в API.' : ''}

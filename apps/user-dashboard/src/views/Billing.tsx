@@ -39,7 +39,11 @@ const PLAN_OPTIONS: {
   blurb: string;
   highlight?: boolean;
 }[] = [
-  { id: 'trial', title: 'Trial', blurb: 'Пробный период: базовые сценарии, без QA и расширенной аналитики.' },
+  {
+    id: 'trial',
+    title: 'Trial',
+    blurb: 'Пробный период: полный набор экранов (Excel, аналитика, QA, интеграции) в лимитах тарифа.',
+  },
   { id: 'starter', title: 'Starter', blurb: 'Полные диалоги, интеграции, ИИ-тексты, отчёты базового уровня.' },
   {
     id: 'business_plus',
@@ -87,10 +91,10 @@ export function Billing() {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto px-10 py-10 space-y-8 custom-scrollbar fade-in">
+    <div className="crm-page crm-page--std custom-scrollbar space-y-6 sm:space-y-8 fade-in">
       <div>
-        <h1 className="text-3xl font-semibold text-white tracking-tight">Мой тариф</h1>
-        <p className="text-[#a1a1aa] mt-2">
+        <h1 className="crm-page-h1">Мой тариф</h1>
+        <p className="crm-page-lead">
           Лимиты и возможности синхронизируются с сервером. Для показа можно мгновенно сменить тариф (демо).
         </p>
         {loading && !subscription ? (
@@ -179,11 +183,19 @@ export function Billing() {
             </div>
 
             <div className="relative z-10">
-              <div className="flex items-center gap-3 mb-6">
+              <div className="flex flex-wrap items-center gap-3 mb-6">
                 <span className="px-3 py-1 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-md text-xs font-bold uppercase tracking-wider">
                   {b.planLabel}
                 </span>
                 <span className="text-sm text-[#71717a]">Активен до {validLabel}</span>
+                {subscription?.isExpired ? (
+                  <span className="text-sm font-semibold text-red-400">Срок истёк — продлите тариф</span>
+                ) : typeof subscription?.daysRemaining === 'number' ? (
+                  <span className="text-sm text-[#a1a1aa]">
+                    Осталось дней:{' '}
+                    <span className="text-white font-mono tabular-nums">{subscription.daysRemaining}</span>
+                  </span>
+                ) : null}
               </div>
 
               <div className="text-5xl font-bold text-white mb-2">

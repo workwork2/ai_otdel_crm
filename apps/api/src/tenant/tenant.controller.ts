@@ -12,23 +12,76 @@ import {
   Put,
   UseGuards,
 } from '@nestjs/common';
+import { buildAnalyticsDigestForPrompt } from '../ai/analytics-digest';
+import {
+  mergeQaDialoguesWithSupportChat,
+  stripSyntheticSupportDialogue,
+} from '../qa/support-qa-merge';
 import { AiService } from '../ai/ai.service';
-import { TenantApiGuard } from '../guards/tenant-api.guard';
+import { TenantPortalGuard } from '../auth/tenant-portal.guard';
+import {
+  buildRetentionEmailContent,
+  filterCustomersForEmailCampaign,
+  type RetentionTarget,
+} from '../mail/retention-audience';
+import { MailService } from '../mail/mail.service';
 import {
   buildBillingFromPlan,
   clampAutomationsToEntitlements,
 } from '../subscription/billing-from-plan';
 import { entitlementsForPlan } from '../subscription/plan-entitlements';
+import { subscriptionWindowFromValidUntil } from '../subscription/subscription-dates';
+import {
+  getTenantSmtpFromWorkspace,
+  mergeIntegrationsForClient,
+  mergeIntegrationsPreserveSecrets,
+  type IntegrationRow,
+} from '../integrations/integration-helpers';
 import { StoreService } from '../store/store.service';
 import type { JsonRecord, TenantWorkspace } from '../store/store.types';
 
 @Controller('v1/tenant/:tenantId')
-@UseGuards(TenantApiGuard)
+@UseGuards(TenantPortalGuard)
 export class TenantController {
   constructor(
     private readonly store: StoreService,
-    private readonly ai: AiService
+    private readonly ai: AiService,
+    private readonly mail: MailService
   ) {}
+
+  /** Рассылки: тариф + канал Email подключён + SMTP (в карточке Email или глобально в API). */
+  private workspaceForEmailCampaigns(tenantId: string): TenantWorkspace {
+    const w = this.store.getTenantWorkspace(tenantId);
+    if (!entitlementsForPlan(w.billing.planKey).integrationsManage) {
+      throw new ForbiddenException(
+        'Управление интеграциями и почтовыми рассылками недоступно на текущем тарифе'
+      );
+    }
+    const emailRow = w.integrations.find((i) => i.name === 'Email');
+    if (!emailRow || emailRow.status !== 'connected') {
+      throw new ForbiddenException('Подключите канал Email в разделе интеграций');
+    }
+    const tenantSmtp = getTenantSmtpFromWorkspace(w);
+    if (!this.mail.isConfigured() && !this.mail.isTenantSmtpConfigured(tenantSmtp)) {
+      throw new BadRequestException(
+        'Укажите SMTP в настройках интеграции «Email» (хост, порт, логин, пароль) или задайте SMTP_HOST, SMTP_USER, SMTP_PASS в окружении API'
+      );
+    }
+    return w;
+  }
+
+  private subscriptionPayload(w: TenantWorkspace) {
+    const entitlements = entitlementsForPlan(w.billing.planKey);
+    const win = subscriptionWindowFromValidUntil(w.billing.validUntil);
+    return {
+      planKey: w.billing.planKey,
+      planLabel: w.billing.planLabel,
+      billing: w.billing,
+      entitlements,
+      isExpired: win.isExpired,
+      daysRemaining: win.daysRemaining,
+    };
+  }
 
   @Get('workspace-meta')
   workspaceMeta(@Param('tenantId') tenantId: string) {
@@ -90,15 +143,19 @@ export class TenantController {
 
   @Get('qa')
   getQa(@Param('tenantId') tenantId: string) {
-    return this.store.getTenantWorkspace(tenantId).qaDialogues;
+    const w = this.store.getTenantWorkspace(tenantId);
+    return mergeQaDialoguesWithSupportChat(w.qaDialogues, w.supportChat);
   }
 
   @Put('qa')
   putQa(@Param('tenantId') tenantId: string, @Body() body: JsonRecord[]) {
+    const list = Array.isArray(body) ? body : [];
+    const stored = stripSyntheticSupportDialogue(list);
     this.store.updateTenant(tenantId, (w) => {
-      w.qaDialogues = Array.isArray(body) ? body : [];
+      w.qaDialogues = stored;
     });
-    return this.store.getTenantWorkspace(tenantId).qaDialogues;
+    const w = this.store.getTenantWorkspace(tenantId);
+    return mergeQaDialoguesWithSupportChat(w.qaDialogues, w.supportChat);
   }
 
   @Get('brain')
@@ -122,13 +179,7 @@ export class TenantController {
   @Get('subscription')
   getSubscription(@Param('tenantId') tenantId: string) {
     const w = this.store.getTenantWorkspace(tenantId);
-    const entitlements = entitlementsForPlan(w.billing.planKey);
-    return {
-      planKey: w.billing.planKey,
-      planLabel: w.billing.planLabel,
-      billing: w.billing,
-      entitlements,
-    };
+    return this.subscriptionPayload(w);
   }
 
   @Patch('billing/plan')
@@ -143,13 +194,7 @@ export class TenantController {
       const max = entitlementsForPlan(w.billing.planKey).maxActiveAutomations;
       w.automations = clampAutomationsToEntitlements(w.automations, max);
     });
-    const w = this.store.getTenantWorkspace(tenantId);
-    return {
-      planKey: w.billing.planKey,
-      planLabel: w.billing.planLabel,
-      billing: w.billing,
-      entitlements: entitlementsForPlan(w.billing.planKey),
-    };
+    return this.subscriptionPayload(this.store.getTenantWorkspace(tenantId));
   }
 
   @Get('automations')
@@ -174,7 +219,8 @@ export class TenantController {
 
   @Get('integrations')
   getIntegrations(@Param('tenantId') tenantId: string) {
-    return this.store.getTenantWorkspace(tenantId).integrations;
+    const w = this.store.getTenantWorkspace(tenantId);
+    return mergeIntegrationsForClient(w.integrations);
   }
 
   @Put('integrations')
@@ -185,11 +231,140 @@ export class TenantController {
     }
     const list = body?.integrations;
     if (Array.isArray(list)) {
+      const merged = mergeIntegrationsPreserveSecrets(w0.integrations, list as IntegrationRow[]);
       this.store.updateTenant(tenantId, (w) => {
-        w.integrations = list as typeof w.integrations;
+        w.integrations = merged;
       });
     }
-    return this.store.getTenantWorkspace(tenantId).integrations;
+    return mergeIntegrationsForClient(this.store.getTenantWorkspace(tenantId).integrations);
+  }
+
+  @Get('email/status')
+  emailIntegrationStatus(@Param('tenantId') tenantId: string) {
+    const w = this.store.getTenantWorkspace(tenantId);
+    const tenantSmtp = getTenantSmtpFromWorkspace(w);
+    const tenantOk = this.mail.isTenantSmtpConfigured(tenantSmtp);
+    const globalOk = this.mail.isConfigured();
+    const from = tenantOk
+      ? tenantSmtp!.smtpFrom?.trim()
+        ? tenantSmtp!.smtpFrom.trim()
+        : `AI Отдел <${tenantSmtp!.smtpUser.trim()}>`
+      : this.mail.getFrom();
+    return {
+      configured: tenantOk || globalOk,
+      from,
+      source: tenantOk ? 'tenant' : globalOk ? 'global' : 'none',
+    };
+  }
+
+  /** Проверка SMTP (AUTH + приветствие сервера) без отправки письма. */
+  @Post('email/verify')
+  async verifyEmailSmtp(@Param('tenantId') tenantId: string) {
+    this.workspaceForEmailCampaigns(tenantId);
+    const w = this.store.getTenantWorkspace(tenantId);
+    const tenantSmtp = getTenantSmtpFromWorkspace(w);
+    if (!this.mail.isConfigured() && !this.mail.isTenantSmtpConfigured(tenantSmtp)) {
+      throw new BadRequestException(
+        'SMTP не настроен: заполните интеграцию «Email» или SMTP_* в окружении API'
+      );
+    }
+    try {
+      await this.mail.verifySmtp(tenantSmtp);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new BadRequestException(msg || 'Проверка SMTP не удалась');
+    }
+    return { ok: true as const };
+  }
+
+  @Post('email/test')
+  async sendTestEmail(
+    @Param('tenantId') tenantId: string,
+    @Body() body: { to?: string }
+  ) {
+    this.workspaceForEmailCampaigns(tenantId);
+    const to = String(body?.to ?? '').trim();
+    if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      throw new BadRequestException('Укажите корректный email в поле to');
+    }
+    const w = this.store.getTenantWorkspace(tenantId);
+    const tenantSmtp = getTenantSmtpFromWorkspace(w);
+    if (!this.mail.isConfigured() && !this.mail.isTenantSmtpConfigured(tenantSmtp)) {
+      throw new BadRequestException(
+        'SMTP не настроен: заполните поля в интеграции «Email» или задайте SMTP_* в окружении API'
+      );
+    }
+    try {
+      await this.mail.sendMail(
+        {
+          to,
+          subject: 'Проверка SMTP — AI Отдел',
+          text: 'Если вы видите это письмо, интеграция почты работает.',
+        },
+        tenantSmtp
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new BadRequestException(msg || 'Не удалось отправить тестовое письмо');
+    }
+    return { ok: true };
+  }
+
+  /** Рассылка удержания: когорта из CRM или все с маркетинговым согласием. */
+  @Post('email/retention-campaign')
+  async sendRetentionCampaign(
+    @Param('tenantId') tenantId: string,
+    @Body() body: { target?: RetentionTarget; limit?: number; dryRun?: boolean }
+  ) {
+    const w = this.workspaceForEmailCampaigns(tenantId);
+    const tenantSmtp = getTenantSmtpFromWorkspace(w);
+    const target: RetentionTarget = body?.target === 'marketing' ? 'marketing' : 'retention';
+    const limit = Math.min(500, Math.max(1, Number(body?.limit) || 50));
+    const dryRun = !!body?.dryRun;
+    const recipients = filterCustomersForEmailCampaign(w.customers, target).slice(0, limit);
+    const content = buildRetentionEmailContent(w);
+
+    if (dryRun) {
+      return {
+        dryRun: true,
+        target,
+        count: recipients.length,
+        sampleEmails: recipients.map((r) => r.email),
+      };
+    }
+
+    if (recipients.length === 0) {
+      throw new BadRequestException(
+        'Нет получателей: проверьте базу (согласие marketing, валидный email без маски *) и для режима retention — сегмент риска в скоринге'
+      );
+    }
+
+    let sent = 0;
+    const errors: string[] = [];
+    for (const r of recipients) {
+      try {
+        await this.mail.sendMail(
+          {
+            to: r.email,
+            subject: content.subject,
+            text: content.text,
+            html: content.html,
+          },
+          tenantSmtp
+        );
+        sent += 1;
+      } catch (e) {
+        errors.push(`${r.email}: ${e instanceof Error ? e.message : 'ошибка отправки'}`);
+      }
+    }
+
+    return {
+      target,
+      attempted: recipients.length,
+      sent,
+      failed: recipients.length - sent,
+      errors: errors.slice(0, 15),
+    };
   }
 
   @Get('support-chat')
@@ -212,6 +387,9 @@ export class TenantController {
     this.store.updateTenant(tenantId, (w) => {
       w.supportChat.push(msg);
     });
+    if (body.role === 'user') {
+      this.store.syncInboundSupportChatToTicket(tenantId, msg);
+    }
     return msg;
   }
 
@@ -246,10 +424,16 @@ export class TenantController {
       master,
       brain?.systemPrompt ? `Правила воркспейса:\n${brain.systemPrompt}` : '',
       'Задача: отредактируй маркетинговый или клиентский текст по инструкции. Верни только итоговый текст, без пояснений.',
+      'Если исходник почти пустой, бессмысленный или тестовый — не копируй «мусор»; по любым зацепкам (название акции, дата, скидка) напиши один короткий дружелюбный абзац для клиента на русском.',
     ]
       .filter(Boolean)
       .join('\n\n');
-    const user = `${instruction}\n\nИсходный текст:\n---\n${draft}\n---`;
+    const thinDraft = draft.length < 40;
+    const user =
+      `${instruction}\n\nИсходный текст:\n---\n${draft}\n---` +
+      (thinDraft
+        ? '\n\nЕсли в блоке выше мало смысла, всё равно сформулируй готовый текст акции по инструкции и дате/заголовку, без цитирования случайных символов.'
+        : '');
     const out = await this.ai.completeText({ system, user, maxTokens: 2048 });
     return { text: out.text, provider: out.provider, error: out.error };
   }
@@ -286,6 +470,27 @@ export class TenantController {
       .filter(Boolean)
       .join('\n');
     const out = await this.ai.completeText({ system, user, maxTokens: 1024 });
+    return { text: out.text, provider: out.provider, error: out.error };
+  }
+
+  /** ИИ-сводка по базе клиентов и QA (Anthropic). Данные только из воркспейса tenant. */
+  @Post('ai/analytics-report')
+  async analyticsReport(@Param('tenantId') tenantId: string) {
+    const w = this.store.getTenantWorkspace(tenantId);
+    if (!entitlementsForPlan(w.billing.planKey).aiRefineCopy) {
+      throw new ForbiddenException('ИИ-отчёты доступны с тарифа Starter и выше');
+    }
+    const master = this.store.getSnapshot().super.masterPrompt;
+    const digest = buildAnalyticsDigestForPrompt(w);
+    const system = [
+      master,
+      'Ты аналитик для B2C/B2B retail. По агрегированным данным ниже подготовь отчёт для владельца бизнеса на русском.',
+      'Формат ответа: Markdown с заголовками ##',
+      'Разделы: 1) Краткое резюме 2) Сегменты и база 3) Риски оттока и QA 4) Что улучшить на этой неделе 5) Идеи касаний (без выдуманных персональных данных).',
+      'Не придумывай цифры, которых нет во входных данных. Если база пуста — так и напиши и дай общие рекомендации.',
+    ].join('\n\n');
+    const user = `Данные воркспейса (агрегаты):\n\n${digest}`;
+    const out = await this.ai.completeText({ system, user, maxTokens: 4096 });
     return { text: out.text, provider: out.provider, error: out.error };
   }
 }

@@ -21,15 +21,16 @@ export interface PlanEntitlements {
 }
 
 export const PLAN_ENTITLEMENTS: Record<PlanKey, PlanEntitlements> = {
+  /** Trial: полный функционал для демо и отладки; отличия — только лимиты биллинга в plan doc. */
   trial: {
-    maxActiveAutomations: 3,
-    excelImport: false,
-    qaFullAccess: false,
-    analyticsAdvanced: false,
-    aiRefineCopy: false,
-    integrationsManage: false,
-    maxChannel: false,
-    exportReports: false,
+    maxActiveAutomations: 6,
+    excelImport: true,
+    qaFullAccess: true,
+    analyticsAdvanced: true,
+    aiRefineCopy: true,
+    integrationsManage: true,
+    maxChannel: true,
+    exportReports: true,
   },
   starter: {
     maxActiveAutomations: 6,

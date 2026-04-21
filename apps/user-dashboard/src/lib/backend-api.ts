@@ -1,4 +1,5 @@
 import { readImpersonation } from '@/lib/impersonation';
+import { getTenantJwt, getStoredTenantId } from '@/lib/tenant-auth';
 
 /**
  * Базовый URL API. Явный NEXT_PUBLIC_API_URL имеет приоритет.
@@ -15,18 +16,24 @@ export function getApiBaseUrl(): string | null {
   return null;
 }
 
+/** ID организации после входа (sessionStorage) или временно из impersonation при обмене кода. */
 export function getTenantIdClient(): string {
-  if (typeof window === 'undefined') {
-    return process.env.NEXT_PUBLIC_DEMO_TENANT_ID?.trim() || 't_demo';
-  }
-  const imp = readImpersonation();
-  return imp?.tenantId || process.env.NEXT_PUBLIC_DEMO_TENANT_ID?.trim() || 't_demo';
+  if (typeof window === 'undefined') return '';
+  const stored = getStoredTenantId()?.trim();
+  if (stored) return stored;
+  const imp = readImpersonation()?.tenantId?.trim();
+  if (imp) return imp;
+  return '';
 }
 
 export function tenantFetchHeaders(): HeadersInit {
   const h: Record<string, string> = {};
   const key = process.env.NEXT_PUBLIC_TENANT_API_KEY?.trim();
   if (key) h['X-Api-Key'] = key;
+  if (typeof window !== 'undefined') {
+    const jwt = getTenantJwt();
+    if (jwt) h['Authorization'] = `Bearer ${jwt}`;
+  }
   return h;
 }
 

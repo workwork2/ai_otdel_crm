@@ -4,14 +4,10 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Headphones, Send, CheckCircle, Circle } from 'lucide-react';
 import { getApiBaseUrl, jsonSuperHeaders, superFetchHeaders } from '@/lib/backend-api';
 import { cn } from '@/lib/utils';
-import {
-  SUPPORT_TICKETS_SEED,
-  SUPPORT_TICKETS_STORAGE_KEY,
-  type SupportTicket,
-} from '@/lib/superAdminData';
+import { SUPPORT_TICKETS_STORAGE_KEY, type SupportTicket } from '@/lib/superAdminData';
 
 function loadTickets(): SupportTicket[] {
-  if (typeof window === 'undefined') return SUPPORT_TICKETS_SEED;
+  if (typeof window === 'undefined') return [];
   try {
     const raw = localStorage.getItem(SUPPORT_TICKETS_STORAGE_KEY);
     if (raw) {
@@ -21,7 +17,7 @@ function loadTickets(): SupportTicket[] {
   } catch {
     /* ignore */
   }
-  return SUPPORT_TICKETS_SEED;
+  return [];
 }
 
 function saveTickets(t: SupportTicket[]) {
@@ -40,7 +36,7 @@ const PRIORITY: Record<SupportTicket['priority'], string> = {
 
 export function SuperSupportInbox() {
   const apiBase = getApiBaseUrl();
-  const [tickets, setTickets] = useState<SupportTicket[]>(SUPPORT_TICKETS_SEED);
+  const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
 
@@ -65,6 +61,16 @@ export function SuperSupportInbox() {
     const t = loadTickets();
     setTickets(t);
     setSelectedId((id) => id ?? t[0]?.id ?? null);
+  }, [apiBase, refreshTickets]);
+
+  useEffect(() => {
+    if (!apiBase) return;
+    const id = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        void refreshTickets();
+      }
+    }, 14_000);
+    return () => clearInterval(id);
   }, [apiBase, refreshTickets]);
 
   useEffect(() => {

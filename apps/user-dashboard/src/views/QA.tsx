@@ -5,42 +5,89 @@ import {
   Hand,
   CheckCircle,
   Search,
-  Filter,
   ChevronUp,
   ChevronDown,
   Shield,
   Send,
   UserCircle2,
+  Sparkles,
+  Loader2,
 } from 'lucide-react';
 import { getApiBaseUrl, getTenantIdClient, jsonTenantHeaders, tenantFetchHeaders } from '@/lib/backend-api';
 import { apiFetchJson } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
-import { mockAIDialogues } from '@/data';
 import type { QAChannel, QADialogue, QADialogueMessage, QADialogueStatus } from '@/types';
 import { useSubscription } from '@/context/SubscriptionContext';
 import { pushToast } from '@/lib/toast';
 import Link from 'next/link';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 
-const QA_STORAGE = 'aura-qa-dialogues-v1';
+const SUPPORT_QA_SYNC_ID = '__platform_support_v1';
+const QA_AUTO_SUGGEST_KEY = 'linearize-qa-auto-suggest';
 
-function loadDialogues(): QADialogue[] {
-  try {
-    const raw = localStorage.getItem(QA_STORAGE);
-    if (raw) {
-      const p = JSON.parse(raw) as QADialogue[];
-      if (Array.isArray(p) && p.length > 0) return p;
-    }
-  } catch {
-    /* ignore */
-  }
-  return mockAIDialogues;
+/** Слова/корни: клиент недоволен, срочность, юридические сигналы — для бейджа «нужен ответ». */
+const ATTENTION_KEYWORDS = [
+  'жалоб',
+  'возврат',
+  'срочн',
+  'обман',
+  'суд',
+  'прокурор',
+  'не пришл',
+  'не работает',
+  'ошибк',
+  'требую',
+  'недовол',
+  'верните деньги',
+  'разочаров',
+  'обманули',
+  'брак',
+];
+
+function formatDialogueForSuggest(d: QADialogue): string {
+  return d.messages
+    .map((m) => {
+      const role =
+        m.sender === 'ai'
+          ? 'ИИ'
+          : m.sender === 'client'
+            ? 'Клиент'
+            : m.sender === 'manager'
+              ? 'Менеджер'
+              : 'Система';
+      return `${role}: ${m.content}`;
+    })
+    .join('\n');
 }
+
+function lastNonSystemMessage(d: QADialogue): QADialogueMessage | undefined {
+  for (let i = d.messages.length - 1; i >= 0; i--) {
+    if (d.messages[i].sender !== 'system') return d.messages[i];
+  }
+  return undefined;
+}
+
+/** Тред в очереди внимания: статус, последнее от клиента или триггерные формулировки. */
+function threadNeedsAttention(d: QADialogue): boolean {
+  if (d.status === 'warning' || d.status === 'intercepted') return true;
+  if (d.status === 'success') return false;
+  const last = lastNonSystemMessage(d);
+  if (last?.sender === 'client') return true;
+  const blob = `${d.issue}\n${d.messages
+    .slice(-4)
+    .map((m) => m.content)
+    .join(' ')}`.toLowerCase();
+  return ATTENTION_KEYWORDS.some((k) => blob.includes(k));
+}
+
+type QAStatusFilter = QADialogueStatus | 'all' | 'needs_attention';
 
 const CHANNEL_LABEL: Record<QAChannel, string> = {
   whatsapp: 'WhatsApp',
   telegram: 'Telegram',
   sms: 'SMS',
   email: 'Email',
+  support: 'Поддержка',
 };
 
 const STATUS_LABEL: Record<QADialogueStatus, string> = {
@@ -70,35 +117,56 @@ export function QA() {
   const [tenantId, setTenantId] = useState(() => getTenantIdClient());
   const skipNextRemotePersist = useRef(true);
 
+  const [dialogues, setDialogues] = useState<QADialogue[]>([]);
+  const [selectedId, setSelectedId] = useState<string>('');
+  const [search, setSearch] = useState('');
+  const [channelFilter, setChannelFilter] = useState<QAChannel | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<QAStatusFilter>('all');
+  const [draft, setDraft] = useState('');
+  const [hydratedFromApi, setHydratedFromApi] = useState(false);
+  const [autoSuggestOnIntercept, setAutoSuggestOnIntercept] = useState(true);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(QA_AUTO_SUGGEST_KEY);
+      if (v === '0') setAutoSuggestOnIntercept(false);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const setAutoSuggestPreference = useCallback((on: boolean) => {
+    setAutoSuggestOnIntercept(on);
+    try {
+      localStorage.setItem(QA_AUTO_SUGGEST_KEY, on ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   useEffect(() => {
     const sync = () => setTenantId(getTenantIdClient());
     sync();
     window.addEventListener('focus', sync);
     window.addEventListener('storage', sync);
+    window.addEventListener('linearize-tenant-auth', sync);
     return () => {
       window.removeEventListener('focus', sync);
       window.removeEventListener('storage', sync);
+      window.removeEventListener('linearize-tenant-auth', sync);
     };
   }, []);
 
-  const [dialogues, setDialogues] = useState<QADialogue[]>(() =>
-    getApiBaseUrl() ? [] : loadDialogues()
-  );
-  const [selectedId, setSelectedId] = useState<string>(() =>
-    getApiBaseUrl() ? '' : loadDialogues()[0]?.id ?? ''
-  );
-  const [search, setSearch] = useState('');
-  const [channelFilter, setChannelFilter] = useState<QAChannel | 'all'>('all');
-  const [statusFilter, setStatusFilter] = useState<QADialogueStatus | 'all'>('all');
-  const [draft, setDraft] = useState('');
-  const [hydratedFromApi, setHydratedFromApi] = useState(() => !getApiBaseUrl());
-
   useEffect(() => {
-    if (!apiBase) {
+    if (!apiBase || !tenantId.trim()) {
       setHydratedFromApi(true);
+      setDialogues([]);
+      setSelectedId('');
       return;
     }
     let cancelled = false;
+    setHydratedFromApi(false);
     (async () => {
       const res = await apiFetchJson<QADialogue[]>(`${apiBase}/v1/tenant/${tenantId}/qa`, {
         headers: tenantFetchHeaders(),
@@ -108,11 +176,13 @@ export function QA() {
       if (cancelled) return;
       if (res.ok && Array.isArray(res.data)) {
         skipNextRemotePersist.current = true;
-        setDialogues(res.data.length > 0 ? res.data : mockAIDialogues);
+        setDialogues(res.data);
+        setSelectedId((prev) => (prev && res.data!.some((d) => d.id === prev) ? prev : res.data![0]?.id ?? ''));
       } else {
         if (!res.ok && res.error) pushToast(`QA: ${res.error}`, 'error');
         skipNextRemotePersist.current = true;
-        setDialogues(loadDialogues());
+        setDialogues([]);
+        setSelectedId('');
       }
       if (!cancelled) setHydratedFromApi(true);
     })();
@@ -121,14 +191,30 @@ export function QA() {
     };
   }, [apiBase, tenantId]);
 
+  /** Подтягиваем только тред «Поддержка» из чата без полной перезагрузки QA. */
   useEffect(() => {
-    if (!hydratedFromApi) return;
-    try {
-      localStorage.setItem(QA_STORAGE, JSON.stringify(dialogues));
-    } catch {
-      /* quota */
-    }
-  }, [dialogues, hydratedFromApi]);
+    if (!apiBase || !tenantId.trim() || !hydratedFromApi) return;
+    const tick = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      void (async () => {
+        const res = await apiFetchJson<QADialogue[]>(`${apiBase}/v1/tenant/${tenantId}/qa`, {
+          headers: tenantFetchHeaders(),
+          retries: 0,
+          silent: true,
+        });
+        if (!res.ok || !Array.isArray(res.data)) return;
+        const freshSupport = res.data.find((d) => d.id === SUPPORT_QA_SYNC_ID);
+        if (!freshSupport) return;
+        skipNextRemotePersist.current = true;
+        setDialogues((prev) => {
+          const rest = prev.filter((d) => d.id !== SUPPORT_QA_SYNC_ID);
+          return [...rest, freshSupport];
+        });
+      })();
+    };
+    const id = window.setInterval(tick, 12_000);
+    return () => clearInterval(id);
+  }, [apiBase, tenantId, hydratedFromApi]);
 
   useEffect(() => {
     if (!apiBase || !hydratedFromApi) return;
@@ -155,7 +241,9 @@ export function QA() {
   const filtered = useMemo(() => {
     return sorted.filter((d) => {
       if (channelFilter !== 'all' && d.channel !== channelFilter) return false;
-      if (statusFilter !== 'all' && d.status !== statusFilter) return false;
+      if (statusFilter === 'needs_attention') {
+        if (!threadNeedsAttention(d)) return false;
+      } else if (statusFilter !== 'all' && d.status !== statusFilter) return false;
       if (search.trim()) {
         const q = search.toLowerCase();
         const inClient = d.client.toLowerCase().includes(q);
@@ -174,9 +262,45 @@ export function QA() {
     if (filtered[0]) setSelectedId(filtered[0].id);
   }, [filtered, selectedId]);
 
-  const needAttentionCount = useMemo(
-    () => dialogues.filter((d) => d.status === 'warning' || d.status === 'intercepted').length,
-    [dialogues]
+  const needAttentionCount = useMemo(() => dialogues.filter(threadNeedsAttention).length, [dialogues]);
+
+  const fillSuggestDraft = useCallback(
+    async (d: QADialogue) => {
+      if (!apiBase || !tenantId.trim() || !qaFull) return;
+      setSuggestLoading(true);
+      const dialogue = formatDialogueForSuggest(d);
+      const res = await apiFetchJson<{ text?: string; error?: string; provider?: string }>(
+        `${apiBase}/v1/tenant/${tenantId}/ai/suggest-reply`,
+        {
+          method: 'POST',
+          headers: jsonTenantHeaders(),
+          body: JSON.stringify({
+            dialogue,
+            channel: d.channel,
+            issue: d.issue,
+          }),
+          retries: 1,
+          silent: true,
+        }
+      );
+      setSuggestLoading(false);
+      if (!res.ok) {
+        pushToast(res.error || 'Не удалось получить подсказку ИИ', 'error');
+        return;
+      }
+      const text = String(res.data.text ?? '').trim();
+      if (!text) {
+        pushToast(res.data.error?.trim() || 'ИИ не вернул текст ответа', 'error');
+        return;
+      }
+      setDraft(text);
+      if (res.data.error?.trim()) {
+        pushToast(`Подсказка получена с замечанием: ${res.data.error}`, 'info');
+      } else {
+        pushToast('Черновик ответа подставлен в поле ниже', 'success');
+      }
+    },
+    [apiBase, tenantId, qaFull]
   );
 
   const navigateList = useCallback(
@@ -208,25 +332,43 @@ export function QA() {
     return () => window.removeEventListener('keydown', onKey);
   }, [navigateList]);
 
-  const intercept = (id: string) => {
-    if (!qaFull) {
-      pushToast('Перехват диалогов доступен с полным QA (тариф Starter и выше)', 'error');
-      return;
-    }
-    setDialogues((prev) =>
-      prev.map((d) =>
-        d.id === id
-          ? {
-              ...d,
-              status: 'intercepted' as const,
-              managerNote:
-                'Диалог перехвачен. ИИ приостановлен — напишите ответ ниже, он уйдёт клиенту после подключения канала.',
-              updatedAt: new Date().toISOString().slice(0, 19),
-            }
-          : d
-      )
-    );
-  };
+  const intercept = useCallback(
+    (id: string) => {
+      const row = dialogues.find((d) => d.id === id);
+      if (row?.channel === 'support') {
+        pushToast('Чат поддержки ведётся в разделе «Поддержка»; перехват здесь не используется.', 'error');
+        return;
+      }
+      if (!qaFull) {
+        pushToast('Перехват диалогов доступен с полным QA (тариф Starter и выше)', 'error');
+        return;
+      }
+      const updatedAt = new Date().toISOString().slice(0, 19);
+      const managerNote =
+        'Диалог перехвачен. ИИ приостановлен — напишите ответ ниже или используйте подсказку ИИ; сообщение уйдёт клиенту после подключения канала.';
+      setDialogues((prev) =>
+        prev.map((d) =>
+          d.id === id
+            ? {
+                ...d,
+                status: 'intercepted' as const,
+                managerNote,
+                updatedAt,
+              }
+            : d
+        )
+      );
+      if (row && autoSuggestOnIntercept) {
+        void fillSuggestDraft({
+          ...row,
+          status: 'intercepted',
+          managerNote,
+          updatedAt,
+        });
+      }
+    },
+    [dialogues, qaFull, autoSuggestOnIntercept, fillSuggestDraft]
+  );
 
   const markResolved = (id: string) => {
     setDialogues((prev) =>
@@ -272,8 +414,8 @@ export function QA() {
   const showComposer = qaFull && selected?.status === 'intercepted';
 
   return (
-    <div className="flex flex-1 min-h-0 h-full font-sans">
-      <div className="w-[340px] flex flex-col border-r border-[#1f1f22] bg-[#0a0a0c] shrink-0">
+    <div className="flex flex-col md:flex-row flex-1 min-h-0 h-full min-w-0 font-sans">
+      <div className="w-full md:w-[min(100%,340px)] md:max-w-[340px] md:shrink-0 flex flex-col border-b md:border-b-0 md:border-r border-[#1f1f22] bg-[#0a0a0c] max-h-[min(46vh,400px)] md:max-h-none min-h-0">
         <div className="p-4 border-b border-[#1f1f22] space-y-3">
           {!qaFull && subscription ? (
             <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100/90 leading-snug">
@@ -310,35 +452,35 @@ export function QA() {
             />
           </div>
 
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <select
-                value={channelFilter}
-                onChange={(e) => setChannelFilter(e.target.value as QAChannel | 'all')}
-                className="w-full bg-[#121214] border border-[#1f1f22] text-xs text-zinc-300 rounded-md pl-2 pr-7 py-1.5 focus:outline-none focus:border-[#3b82f6]/50 appearance-none cursor-pointer"
-              >
-                <option value="all">Все каналы</option>
-                <option value="whatsapp">WhatsApp</option>
-                <option value="telegram">Telegram</option>
-                <option value="sms">SMS</option>
-                <option value="email">Email</option>
-              </select>
-              <Filter className="w-3 h-3 absolute right-2 top-2 text-zinc-500 pointer-events-none" />
-            </div>
-            <div className="relative flex-1">
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as QADialogueStatus | 'all')}
-                className="w-full bg-[#121214] border border-[#1f1f22] text-xs text-zinc-300 rounded-md pl-2 pr-7 py-1.5 focus:outline-none focus:border-[#3b82f6]/50 appearance-none cursor-pointer"
-              >
-                <option value="all">Все статусы</option>
-                <option value="warning">Требует внимания</option>
-                <option value="intercepted">Перехвачен</option>
-                <option value="active">В диалоге</option>
-                <option value="success">Успешно</option>
-              </select>
-              <Filter className="w-3 h-3 absolute right-2 top-2 text-zinc-500 pointer-events-none" />
-            </div>
+          <div className="flex gap-2 min-w-0">
+            <NativeSelect
+              variant="filter"
+              className="flex-1 min-w-0"
+              value={channelFilter}
+              onChange={(e) => setChannelFilter(e.target.value as QAChannel | 'all')}
+              aria-label="Фильтр по каналу"
+            >
+              <option value="all">Все каналы</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="telegram">Telegram</option>
+              <option value="sms">SMS</option>
+              <option value="email">Email</option>
+              <option value="support">Поддержка</option>
+            </NativeSelect>
+            <NativeSelect
+              variant="filter"
+              className="flex-1 min-w-0"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as QAStatusFilter)}
+              aria-label="Фильтр по статусу"
+            >
+              <option value="all">Все статусы</option>
+              <option value="needs_attention">Нужен ответ / риск</option>
+              <option value="warning">Требует внимания</option>
+              <option value="intercepted">Перехвачен</option>
+              <option value="active">В диалоге</option>
+              <option value="success">Успешно</option>
+            </NativeSelect>
           </div>
 
           <p className="text-[10px] text-[#52525b] flex items-center gap-3">
@@ -370,7 +512,15 @@ export function QA() {
                 )}
               >
                 <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="font-medium text-[14px] text-white truncate">{d.client}</span>
+                  <span className="font-medium text-[14px] text-white truncate flex items-center gap-1.5 min-w-0">
+                    {threadNeedsAttention(d) && d.status === 'active' ? (
+                      <span
+                        className="shrink-0 w-1.5 h-1.5 rounded-full bg-amber-400"
+                        title="Последнее сообщение от клиента или сработали маркеры риска"
+                      />
+                    ) : null}
+                    {d.client}
+                  </span>
                   <span
                     className="text-[9px] font-mono border border-[#1f1f22] bg-[#121214] px-1.5 py-0.5 rounded shrink-0"
                     style={{ color: statusColor(d.status) }}
@@ -404,10 +554,10 @@ export function QA() {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#0a0a0c]">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#0a0a0c] overflow-hidden">
         {selected ? (
           <>
-            <div className="shrink-0 border-b border-[#1f1f22] px-8 py-6 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+            <div className="shrink-0 border-b border-[#1f1f22] px-4 sm:px-6 lg:px-8 py-4 sm:py-6 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
               <div className="flex items-start gap-4">
                 <div
                   className="w-12 h-12 rounded-full bg-[#121214] border border-[#1f1f22] flex items-center justify-center text-sm font-bold text-white"
@@ -415,8 +565,10 @@ export function QA() {
                 >
                   {selected.clientInitials}
                 </div>
-                <div>
-                  <h1 className="text-xl font-semibold text-white">{selected.client}</h1>
+                <div className="min-w-0">
+                  <h1 className="text-lg sm:text-xl font-semibold text-white text-balance break-words">
+                    {selected.client}
+                  </h1>
                   <div className="flex flex-wrap items-center gap-2 mt-2">
                     <span className="text-[11px] font-mono border border-[#1f1f22] bg-[#121214] px-2 py-0.5 rounded text-[#a1a1aa]">
                       {CHANNEL_LABEL[selected.channel]}
@@ -439,7 +591,8 @@ export function QA() {
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 shrink-0">
-                {(selected.status === 'warning' || selected.status === 'active') && (
+                {(selected.status === 'warning' || selected.status === 'active') &&
+                  selected.channel !== 'support' && (
                   <button
                     type="button"
                     onClick={() => intercept(selected.id)}
@@ -468,7 +621,7 @@ export function QA() {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto custom-scrollbar px-8 py-6 min-h-0">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar px-4 sm:px-6 lg:px-8 py-4 sm:py-6 min-h-0">
               {selected.managerNote && (
                 <div className="mb-6 flex items-start gap-3 rounded-lg border border-[#3b82f6]/30 bg-[#3b82f6]/10 px-4 py-3 text-sm text-[#93c5fd]">
                   <Shield className="w-5 h-5 shrink-0 mt-0.5" />
@@ -486,16 +639,27 @@ export function QA() {
             </div>
 
             {showComposer && (
-              <div className="shrink-0 border-t border-[#1f1f22] bg-[#0a0a0c] px-8 py-4">
+              <div className="shrink-0 border-t border-[#1f1f22] bg-[#0a0a0c] px-4 sm:px-6 lg:px-8 py-4">
                 <div className="max-w-3xl flex flex-col gap-3">
-                  <div className="flex items-center gap-2 text-xs text-[#71717a]">
-                    <UserCircle2 className="w-4 h-4 text-[#3b82f6]" />
-                    <span>
-                      Ответ менеджера в {CHANNEL_LABEL[selected.channel]} (после перехвата; в проде уйдёт в API
-                      канала)
-                    </span>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div className="flex items-center gap-2 text-xs text-[#71717a]">
+                      <UserCircle2 className="w-4 h-4 text-[#3b82f6]" />
+                      <span>
+                        Ответ менеджера в {CHANNEL_LABEL[selected.channel]} (после перехвата; в проде уйдёт в API
+                        канала)
+                      </span>
+                    </div>
+                    <label className="inline-flex items-center gap-2 text-[11px] text-[#a1a1aa] cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={autoSuggestOnIntercept}
+                        onChange={(e) => setAutoSuggestPreference(e.target.checked)}
+                        className="rounded border-[#3f3f46] bg-[#121214] text-[#8b5cf6] focus:ring-[#8b5cf6]/40"
+                      />
+                      Автоподсказка ИИ при перехвате
+                    </label>
                   </div>
-                  <div className="flex gap-3">
+                  <div className="flex flex-col sm:flex-row gap-3">
                     <textarea
                       value={draft}
                       onChange={(e) => setDraft(e.target.value)}
@@ -507,17 +671,33 @@ export function QA() {
                       }}
                       placeholder="Напишите сообщение клиенту… (Ctrl+Enter или ⌘+Enter — отправить)"
                       rows={3}
-                      className="flex-1 bg-[#121214] border border-[#1f1f22] rounded-xl px-4 py-3 text-sm text-[#e4e4e7] placeholder:text-[#52525b] focus:outline-none focus:border-[#3b82f6]/50 resize-y min-h-[88px]"
+                      disabled={suggestLoading}
+                      className="flex-1 bg-[#121214] border border-[#1f1f22] rounded-xl px-4 py-3 text-sm text-[#e4e4e7] placeholder:text-[#52525b] focus:outline-none focus:border-[#3b82f6]/50 resize-y min-h-[88px] disabled:opacity-60"
                     />
-                    <button
-                      type="button"
-                      onClick={sendManagerMessage}
-                      disabled={!draft.trim()}
-                      className="self-end shrink-0 inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-[#3b82f6] text-white text-sm font-semibold hover:bg-[#2563eb] disabled:opacity-40 disabled:pointer-events-none"
-                    >
-                      <Send className="w-4 h-4" />
-                      Отправить
-                    </button>
+                    <div className="flex flex-col gap-2 self-end shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => void fillSuggestDraft(selected)}
+                        disabled={!qaFull || suggestLoading}
+                        className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-[#8b5cf6]/35 text-[#c4b5fd] text-sm font-medium hover:bg-[#8b5cf6]/10 disabled:opacity-40 disabled:pointer-events-none"
+                      >
+                        {suggestLoading ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-4 h-4" />
+                        )}
+                        Подсказка
+                      </button>
+                      <button
+                        type="button"
+                        onClick={sendManagerMessage}
+                        disabled={!draft.trim() || suggestLoading}
+                        className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-[#3b82f6] text-white text-sm font-semibold hover:bg-[#2563eb] disabled:opacity-40 disabled:pointer-events-none"
+                      >
+                        <Send className="w-4 h-4" />
+                        Отправить
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

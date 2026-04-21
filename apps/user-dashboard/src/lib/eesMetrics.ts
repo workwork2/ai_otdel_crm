@@ -13,8 +13,7 @@ export interface EESDashboardMetrics {
 }
 
 /**
- * Агрегаты EES (Effectiveness / единая экономика сценариев) по текущей базе.
- * В проде часть полей приходит с бэкенда; здесь — детерминированно от профилей.
+ * Агрегаты EES по текущей базе клиентов (только поля из профилей).
  */
 export function computeEESMetrics(clients: CustomerProfile[]): EESDashboardMetrics {
   const enriched = clients;
@@ -44,14 +43,72 @@ export function computeEESMetrics(clients: CustomerProfile[]): EESDashboardMetri
   };
 }
 
-/** Точки для графика «удержание / возврат из зоны риска» (демо по неделям) */
-export function churnPreventionTrend(): { week: string; returned: number; inRisk: number }[] {
+/**
+ * Точки для графика удержания — только агрегаты по текущей базе (без выдуманных недель).
+ */
+export function churnTrendFromClients(clients: CustomerProfile[]): {
+  week: string;
+  returned: number;
+  inRisk: number;
+}[] {
+  if (clients.length === 0) return [];
+  const ees = computeEESMetrics(clients);
   return [
-    { week: 'Нед 1', returned: 12, inRisk: 48 },
-    { week: 'Нед 2', returned: 18, inRisk: 52 },
-    { week: 'Нед 3', returned: 24, inRisk: 44 },
-    { week: 'Нед 4', returned: 31, inRisk: 39 },
+    {
+      week: 'По базе',
+      returned: ees.churnRiskReturnedCount,
+      inRisk: ees.churnRiskContactedCount,
+    },
   ];
+}
+
+const LIFECYCLE_LABEL: Record<string, string> = {
+  new: 'Новые',
+  active: 'Активные',
+  dormant: 'Спящие',
+  at_risk: 'В зоне риска',
+  reactivated: 'Реактивированные',
+};
+
+/** Воронка по lifecycle из скоринга (только клиенты с заполненным scoring). */
+export function lifecycleFunnelFromClients(clients: CustomerProfile[]): { name: string; value: number }[] {
+  if (!clients.length) return [];
+  const counts = new Map<string, number>();
+  for (const c of clients) {
+    const lc = c.scoring?.lifecycle;
+    if (!lc) continue;
+    counts.set(lc, (counts.get(lc) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .filter(([, v]) => v > 0)
+    .map(([k, v]) => ({ name: LIFECYCLE_LABEL[k] ?? k, value: v }));
+}
+
+/** Суммы покупок по месяцам из purchases[].date (только данные базы). */
+export function purchaseTotalsByMonth(
+  clients: CustomerProfile[],
+  monthsBack = 8
+): { key: string; name: string; value: number }[] {
+  const now = new Date();
+  const rows: { key: string; name: string; value: number }[] = [];
+  for (let i = monthsBack - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const name = d.toLocaleDateString('ru-RU', { month: 'short', year: '2-digit' });
+    rows.push({ key, name, value: 0 });
+  }
+  const keySet = new Set(rows.map((r) => r.key));
+  for (const c of clients) {
+    for (const p of c.purchases ?? []) {
+      const pd = new Date(p.date);
+      if (Number.isNaN(pd.getTime())) continue;
+      const key = `${pd.getFullYear()}-${String(pd.getMonth() + 1).padStart(2, '0')}`;
+      if (!keySet.has(key)) continue;
+      const row = rows.find((r) => r.key === key);
+      if (row) row.value += p.price;
+    }
+  }
+  return rows;
 }
 
 export function formatRub(n: number): string {

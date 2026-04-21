@@ -4,7 +4,6 @@ import React, { useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   Search,
-  Filter,
   ShieldCheck,
   MessageCircle,
   ShoppingBag,
@@ -21,9 +20,10 @@ import { useSubscription } from '@/context/SubscriptionContext';
 import { getApiBaseUrl } from '@/lib/backend-api';
 import { CustomerProfile, CommunicationEvent, ChurnSegment } from '@/types';
 import { CHURN_LABEL, LIFECYCLE_LABEL } from '@/lib/scoring';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 
 export function Audience() {
-  const { clients, importExcelFile, downloadTemplate, resetToDemo, importError, lastImportInfo } =
+  const { clients, importExcelFile, downloadTemplate, clearAudience, importError, lastImportInfo } =
     useAudienceData();
   const { has, subscription } = useSubscription();
   const apiOn = !!getApiBaseUrl();
@@ -79,10 +79,9 @@ export function Audience() {
   }, [searchQuery, filterType, filterLTV, filterConsent, filterChurn, filteredAudience, selectedUser]);
 
   return (
-    <div className="flex h-full font-sans">
-      
+    <div className="flex flex-col md:flex-row h-full min-h-0 min-w-0 font-sans">
       {/* Left List */}
-      <div className="w-[340px] flex flex-col border-r border-[#1f1f22] bg-[#0a0a0c] shrink-0">
+      <div className="w-full md:w-[min(100%,340px)] md:max-w-[340px] md:shrink-0 flex flex-col border-b md:border-b-0 md:border-r border-[#1f1f22] bg-[#0a0a0c] max-h-[min(46vh,400px)] md:max-h-none min-h-0">
         <div className="p-4 border-b border-[#1f1f22] space-y-4">
           <div className="flex items-start justify-between gap-2">
             <div>
@@ -128,9 +127,9 @@ export function Audience() {
             </button>
             <button
               type="button"
-              onClick={resetToDemo}
+              onClick={clearAudience}
               className="inline-flex items-center justify-center gap-1 px-2 py-2 rounded-lg border border-[#1f1f22] text-[#71717a] hover:text-white hover:bg-[#121214]"
-              title="Сбросить демо-данные"
+              title="Очистить базу (и на сервере при включённом API)"
             >
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
@@ -165,65 +164,58 @@ export function Audience() {
             />
           </div>
           
-          <div className="flex flex-col gap-2">
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <select 
-                  value={filterType}
-                  onChange={e => setFilterType(e.target.value)}
-                  className="w-full bg-[#121214] border border-[#1f1f22] text-xs text-zinc-300 rounded-md pl-2 pr-6 py-1.5 focus:outline-none focus:border-[#3b82f6]/50 appearance-none cursor-pointer"
-                >
-                  <option value="all">Тип: Все</option>
-                  <option value="b2b">B2B</option>
-                  <option value="b2c">B2C</option>
-                </select>
-                <Filter className="w-3 h-3 absolute right-2 top-2 text-zinc-500 pointer-events-none" />
-              </div>
-
-              <div className="relative flex-1">
-                <select 
-                  value={filterLTV}
-                  onChange={e => setFilterLTV(e.target.value)}
-                  className="w-full bg-[#121214] border border-[#1f1f22] text-xs text-zinc-300 rounded-md pl-2 pr-6 py-1.5 focus:outline-none focus:border-[#3b82f6]/50 appearance-none cursor-pointer"
-                >
-                  <option value="all">LTV: Все</option>
-                  <option value="VIP">VIP</option>
-                  <option value="Основа">Основа</option>
-                  <option value="Высокий риск">Риск</option>
-                </select>
-                <Filter className="w-3 h-3 absolute right-2 top-2 text-zinc-500 pointer-events-none" />
-              </div>
-            </div>
-
-            <div className="relative">
-              <select 
-                value={filterConsent}
-                onChange={e => setFilterConsent(e.target.value)}
-                className="w-full bg-[#121214] border border-[#1f1f22] text-xs text-zinc-300 rounded-md pl-2 pr-6 py-1.5 focus:outline-none focus:border-[#3b82f6]/50 appearance-none cursor-pointer"
+          <div className="flex flex-col gap-2 min-w-0">
+            <div className="flex gap-2 min-w-0">
+              <NativeSelect
+                variant="filter"
+                className="flex-1 min-w-0"
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value)}
+                aria-label="Фильтр по типу клиента"
               >
-                <option value="all">Согласия: Любые каналы</option>
-                <option value="marketing">Только Promo (Разрешено)</option>
-                <option value="whatsapp">Только WhatsApp (Активен)</option>
-                <option value="telegram">Только Telegram (Активен)</option>
-              </select>
-              <Filter className="w-3 h-3 absolute right-2 top-2 text-zinc-500 pointer-events-none" />
-            </div>
-
-            <div className="relative">
-              <select
-                value={filterChurn}
-                onChange={(e) => setFilterChurn(e.target.value as 'all' | ChurnSegment)}
-                className="w-full bg-[#121214] border border-[#1f1f22] text-xs text-zinc-300 rounded-md pl-2 pr-6 py-1.5 focus:outline-none focus:border-[#3b82f6]/50 appearance-none cursor-pointer"
+                <option value="all">Тип: Все</option>
+                <option value="b2b">B2B</option>
+                <option value="b2c">B2C</option>
+              </NativeSelect>
+              <NativeSelect
+                variant="filter"
+                className="flex-1 min-w-0"
+                value={filterLTV}
+                onChange={(e) => setFilterLTV(e.target.value)}
+                aria-label="Фильтр по LTV"
               >
-                <option value="all">Отток: все сегменты</option>
-                {(Object.keys(CHURN_LABEL) as ChurnSegment[]).map((k) => (
-                  <option key={k} value={k}>
-                    {CHURN_LABEL[k]}
-                  </option>
-                ))}
-              </select>
-              <Filter className="w-3 h-3 absolute right-2 top-2 text-zinc-500 pointer-events-none" />
+                <option value="all">LTV: Все</option>
+                <option value="VIP">VIP</option>
+                <option value="Основа">Основа</option>
+                <option value="Высокий риск">Риск</option>
+              </NativeSelect>
             </div>
+            <NativeSelect
+              variant="filter"
+              className="w-full"
+              value={filterConsent}
+              onChange={(e) => setFilterConsent(e.target.value)}
+              aria-label="Фильтр по согласиям"
+            >
+              <option value="all">Согласия: Любые каналы</option>
+              <option value="marketing">Только Promo (Разрешено)</option>
+              <option value="whatsapp">Только WhatsApp (Активен)</option>
+              <option value="telegram">Только Telegram (Активен)</option>
+            </NativeSelect>
+            <NativeSelect
+              variant="filter"
+              className="w-full"
+              value={filterChurn}
+              onChange={(e) => setFilterChurn(e.target.value as 'all' | ChurnSegment)}
+              aria-label="Фильтр по сегменту оттока"
+            >
+              <option value="all">Отток: все сегменты</option>
+              {(Object.keys(CHURN_LABEL) as ChurnSegment[]).map((k) => (
+                <option key={k} value={k}>
+                  {CHURN_LABEL[k]}
+                </option>
+              ))}
+            </NativeSelect>
           </div>
         </div>
 
@@ -270,30 +262,37 @@ export function Audience() {
       </div>
 
       {/* Right Details Panel */}
-      <div className="flex-1 overflow-y-auto bg-[#0a0a0c] custom-scrollbar">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden bg-[#0a0a0c] custom-scrollbar min-w-0 min-h-0">
         {selectedUser ? (
-          <div className="max-w-4xl mx-auto p-8 space-y-8 fade-in">
-            
+          <div className="max-w-4xl mx-auto p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8 fade-in">
             {/* Header / Basic Info */}
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-5">
-                <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-[#3b82f6]/20 to-[#8b5cf6]/20 border border-[#3b82f6]/30 flex items-center justify-center shadow-[0_0_20px_rgba(59,130,246,0.1)]">
-                  <span className="text-2xl font-bold text-white">{selectedUser.avatar}</span>
+            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-5 min-w-0">
+                <div className="w-16 h-16 sm:w-20 sm:h-20 shrink-0 rounded-full bg-gradient-to-tr from-[#3b82f6]/20 to-[#8b5cf6]/20 border border-[#3b82f6]/30 flex items-center justify-center shadow-[0_0_20px_rgba(59,130,246,0.1)]">
+                  <span className="text-xl sm:text-2xl font-bold text-white">{selectedUser.avatar}</span>
                 </div>
-                <div>
-                  <h1 className="text-3xl font-semibold text-white tracking-tight flex items-center gap-3">
-                    {selectedUser.name}
-                    {selectedUser.type === 'b2b' && <span className="text-[10px] bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2 py-1 rounded uppercase font-bold tracking-wider">B2B Корпорация</span>}
-                    {selectedUser.type === 'b2c' && <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-1 rounded uppercase font-bold tracking-wider">B2C</span>}
+                <div className="min-w-0">
+                  <h1 className="text-xl sm:text-2xl lg:text-3xl font-semibold text-white tracking-tight flex flex-wrap items-center gap-2">
+                    <span className="break-words">{selectedUser.name}</span>
+                    {selectedUser.type === 'b2b' && (
+                      <span className="text-[10px] bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2 py-1 rounded uppercase font-bold tracking-wider shrink-0">
+                        B2B Корпорация
+                      </span>
+                    )}
+                    {selectedUser.type === 'b2c' && (
+                      <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-1 rounded uppercase font-bold tracking-wider shrink-0">
+                        B2C
+                      </span>
+                    )}
                   </h1>
-                  <div className="flex items-center gap-4 mt-2 text-sm text-[#a1a1aa]">
-                    <span>{selectedUser.phone}</span>
-                    <span>•</span>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:gap-4 mt-2 text-sm text-[#a1a1aa] break-all">
+                    <span className="tabular-nums">{selectedUser.phone}</span>
+                    <span className="hidden sm:inline text-zinc-600">•</span>
                     <span>{selectedUser.email}</span>
                   </div>
                 </div>
               </div>
-              <div className="text-right flex flex-col items-end gap-2">
+              <div className="text-left lg:text-right flex flex-col lg:items-end gap-2 shrink-0">
                 <span className={cn(
                   "px-3 py-1.5 rounded-lg text-[11px] uppercase font-bold tracking-wider border",
                   selectedUser.ltvStatus === 'VIP' ? "bg-[#f59e0b]/10 text-[#f59e0b] border-[#f59e0b]/30" : 
@@ -370,7 +369,7 @@ export function Audience() {
               </div>
               <h3 className="text-sm font-semibold text-white mb-6 uppercase tracking-wider text-[#3b82f6]">Аналитика покупателя (ИИ)</h3>
               
-              <div className="grid grid-cols-3 gap-6 relative z-10">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 relative z-10">
                 <div>
                   <div className="text-[11px] text-[#a1a1aa] uppercase tracking-wider mb-1 flex items-center gap-1.5">
                     Статус <Info className="w-3 h-3" />

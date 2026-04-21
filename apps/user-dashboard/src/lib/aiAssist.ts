@@ -4,20 +4,30 @@
  */
 import { getApiBaseUrl, getTenantIdClient, jsonTenantHeaders } from '@/lib/backend-api';
 
-function getGeminiKey(): string | undefined {
-  if (typeof process !== 'undefined' && process.env) {
-    return process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
-  }
-  return undefined;
+/** Только NEXT_PUBLIC_* попадает в клиентский бандл Next.js; `GEMINI_API_KEY` без префикса в браузере недоступен. */
+function getBrowserGeminiKey(): string | undefined {
+  if (typeof process === 'undefined' || !process.env) return undefined;
+  const k = process.env.NEXT_PUBLIC_GEMINI_API_KEY?.trim();
+  return k || undefined;
 }
 
-function localPolish(text: string): string {
+function getBrowserGeminiModel(): string {
+  if (typeof process === 'undefined' || !process.env) return 'gemini-2.5-flash';
+  return process.env.NEXT_PUBLIC_GEMINI_MODEL?.trim() || 'gemini-2.5-flash';
+}
+
+/** Ответ API без реальной модели или старый формат stub — не показывать как готовый текст. */
+function isAiConfigStubResponse(
+  text: string,
+  provider: string | undefined
+): boolean {
+  if (provider === 'stub') return true;
   const t = text.trim();
-  if (!t) return t;
-  const lines = t.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  if (!t) return false;
   return (
-    lines.join('\n') +
-    '\n\n—\n[Демо: включите API (NEXT_PUBLIC_API_URL) с ANTHROPIC_API_KEY на сервере или задайте NEXT_PUBLIC_GEMINI_API_KEY для прямого Gemini.]'
+    /\[Задайте GEMINI_API_KEY|\[ИИ недоступен:|apps\/api\/\.env.*ANTHROPIC|Перезапустите API\]/i.test(
+      t
+    )
   );
 }
 
@@ -26,25 +36,59 @@ export async function refineMarketingCopy(
   draft: string
 ): Promise<{ text: string; usedApi: boolean; error?: string }> {
   const base = typeof window !== 'undefined' ? getApiBaseUrl() : null;
-  const tid = typeof window !== 'undefined' ? getTenantIdClient() : 't_demo';
+  const tid = typeof window !== 'undefined' ? getTenantIdClient().trim() : '';
+  /** Сообщение об ошибке с API, если ответ 200 но stub (показать при отсутствии NEXT_PUBLIC ключа). */
+  let serverAiHint: string | undefined;
 
-  if (base) {
+  if (base && tid) {
     try {
       const res = await fetch(`${base}/v1/tenant/${tid}/ai/refine`, {
         method: 'POST',
         headers: jsonTenantHeaders(),
         body: JSON.stringify({ instruction: instruction.trim(), draft: draft.trim() }),
       });
-      if (res.ok) {
+      if (!res.ok) {
+        const errBody = await res.text();
+        const snippet = errBody.replace(/\s+/g, ' ').trim().slice(0, 280);
+        if (res.status === 401) {
+          return {
+            text: '',
+            usedApi: false,
+            error: 'Сессия истекла — войдите в кабинет снова.',
+          };
+        }
+        if (res.status === 403) {
+          return {
+            text: '',
+            usedApi: false,
+            error:
+              snippet ||
+              'Доступ к ИИ для этой организации запрещён (тариф или права). Обратитесь к администратору.',
+          };
+        }
+        if (res.status < 500) {
+          return {
+            text: '',
+            usedApi: false,
+            error: snippet || `Запрос к API ИИ отклонён (${res.status}).`,
+          };
+        }
+        /* 502/503 — пробуем запасной путь в браузере */
+      } else {
         const data = (await res.json()) as { text?: string; provider?: string; error?: string };
         const text = String(data.text ?? '').trim();
-        if (text) {
+        const prov = data.provider;
+        if (text && !isAiConfigStubResponse(text, prov)) {
           return {
             text,
-            usedApi: data.provider !== 'stub',
+            usedApi: prov !== 'stub',
             error: data.error,
           };
         }
+        if (prov === 'stub' && data.error?.trim()) {
+          serverAiHint = data.error.trim();
+        }
+        /* stub или пустой ответ — пробуем Gemini из браузера (NEXT_PUBLIC_GEMINI_API_KEY). */
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -52,16 +96,23 @@ export async function refineMarketingCopy(
     }
   }
 
-  const key = getGeminiKey();
-  const prompt = `${instruction.trim()}\n\nИсходный текст:\n---\n${draft}\n---\nВерни только итоговый текст без пояснений.`;
+  const key = getBrowserGeminiKey();
+  const prompt = `${instruction.trim()}\n\nИсходный текст:\n---\n${draft}\n---\nВерни только итоговый текст без пояснений. Если в исходнике мало смысла — всё равно напиши один короткий дружелюбный абзац для клиента на русском, не копируя случайные символы.`;
 
   if (!key) {
-    return { text: localPolish(draft), usedApi: false };
+    return {
+      text: '',
+      usedApi: false,
+      error:
+        serverAiHint?.slice(0, 500) ||
+        'ИИ на сервере не вернул текст (проверьте логи API и ключи GEMINI_API_KEY / ANTHROPIC_API_KEY в apps/api/.env). Запасной путь: задайте NEXT_PUBLIC_GEMINI_API_KEY в apps/user-dashboard/.env.local и перезапустите `npm run dev` панели — без префикса NEXT_PUBLIC_ ключ в браузере не виден.',
+    };
   }
 
   try {
+    const model = encodeURIComponent(getBrowserGeminiModel());
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(key)}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -74,9 +125,9 @@ export async function refineMarketingCopy(
     if (!res.ok) {
       const errBody = await res.text();
       return {
-        text: localPolish(draft),
+        text: '',
         usedApi: false,
-        error: `API ${res.status}: ${errBody.slice(0, 200)}`,
+        error: `Gemini ${res.status}: ${errBody.slice(0, 200)}`,
       };
     }
 
@@ -88,11 +139,18 @@ export async function refineMarketingCopy(
 
     const cleaned = out.trim();
     if (!cleaned) {
-      return { text: localPolish(draft), usedApi: false, error: 'Пустой ответ модели' };
+      return { text: '', usedApi: false, error: 'Пустой ответ модели' };
+    }
+    if (isAiConfigStubResponse(cleaned, undefined)) {
+      return {
+        text: '',
+        usedApi: false,
+        error: 'Ответ модели похож на служебное сообщение — попробуйте ещё раз или проверьте ключи.',
+      };
     }
     return { text: cleaned, usedApi: true };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    return { text: localPolish(draft), usedApi: false, error: msg };
+    return { text: '', usedApi: false, error: msg };
   }
 }

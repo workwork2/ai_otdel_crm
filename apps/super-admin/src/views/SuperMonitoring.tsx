@@ -3,31 +3,34 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, Radio, Plug } from 'lucide-react';
 import { getApiBaseUrl, superFetchHeaders } from '@/lib/backend-api';
-import { INTEGRATION_ERRORS, QUEUE_STATS } from '@/lib/superAdminData';
 
-type QueueRow = (typeof QUEUE_STATS)[number];
-type ErrRow = (typeof INTEGRATION_ERRORS)[number];
+type QueueRow = { channel: string; pending: number; sending: number; failed24h: number };
+type ErrRow = { id: string; at: string; tenantName: string; channel: string; detail: string };
 
 export function SuperMonitoring() {
   const apiBase = getApiBaseUrl();
-  const [queues, setQueues] = useState<QueueRow[]>(QUEUE_STATS);
-  const [errors, setErrors] = useState<ErrRow[]>(INTEGRATION_ERRORS);
+  const [queues, setQueues] = useState<QueueRow[]>([]);
+  const [errors, setErrors] = useState<ErrRow[]>([]);
 
   const load = useCallback(async () => {
     if (!apiBase) {
-      setQueues(QUEUE_STATS);
-      setErrors(INTEGRATION_ERRORS);
+      setQueues([]);
+      setErrors([]);
       return;
     }
     try {
       const r = await fetch(`${apiBase}/v1/super/monitoring`, { headers: superFetchHeaders() });
       if (r.ok) {
         const data = (await r.json()) as { queueStats?: QueueRow[]; integrationErrors?: ErrRow[] };
-        if (Array.isArray(data.queueStats)) setQueues(data.queueStats);
-        if (Array.isArray(data.integrationErrors)) setErrors(data.integrationErrors);
+        setQueues(Array.isArray(data.queueStats) ? data.queueStats : []);
+        setErrors(Array.isArray(data.integrationErrors) ? data.integrationErrors : []);
+      } else {
+        setQueues([]);
+        setErrors([]);
       }
     } catch {
-      /* ignore */
+      setQueues([]);
+      setErrors([]);
     }
   }, [apiBase]);
 

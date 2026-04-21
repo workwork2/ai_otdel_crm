@@ -3,6 +3,7 @@
  * На одном origin (прод) блокировка из админки видна здесь. Разные порты localhost — разный storage.
  */
 import { readImpersonation } from '@/lib/impersonation';
+import { getStoredTenantId } from '@/lib/tenant-auth';
 
 export const CHAT_BLOCKS_STORAGE_KEY = 'super_tenant_chat_blocks';
 
@@ -11,6 +12,7 @@ export function isSupportChatBlocked(): boolean {
   const imp = readImpersonation();
   const tid =
     imp?.tenantId ||
+    getStoredTenantId()?.trim() ||
     (typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_DEMO_TENANT_ID : undefined);
   if (!tid) return false;
   try {

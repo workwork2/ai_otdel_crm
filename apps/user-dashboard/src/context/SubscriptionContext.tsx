@@ -10,6 +10,8 @@ import React, {
 } from 'react';
 import { apiFetchJson } from '@/lib/api-client';
 import { getApiBaseUrl, getTenantIdClient, tenantFetchHeaders } from '@/lib/backend-api';
+import { clearImpersonation } from '@/lib/impersonation';
+import { clearTenantSession } from '@/lib/tenant-auth';
 import { pushToast } from '@/lib/toast';
 
 export type PlanEntitlements = {
@@ -40,6 +42,9 @@ export type SubscriptionPayload = {
   planLabel: string;
   billing: BillingDto;
   entitlements: PlanEntitlements;
+  /** Срок действия подписки по validUntil (календарные дни). */
+  isExpired?: boolean;
+  daysRemaining?: number;
 };
 
 type Ctx = {
@@ -65,15 +70,17 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     sync();
     window.addEventListener('focus', sync);
     window.addEventListener('storage', sync);
+    window.addEventListener('linearize-tenant-auth', sync);
     return () => {
       window.removeEventListener('focus', sync);
       window.removeEventListener('storage', sync);
+      window.removeEventListener('linearize-tenant-auth', sync);
     };
   }, []);
 
   const refresh = useCallback(async () => {
     const base = getApiBaseUrl();
-    if (!base) {
+    if (!base || !tenantId.trim()) {
       setSubscription(null);
       setLoading(false);
       setError(null);
@@ -93,7 +100,15 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     } else {
       setSubscription(null);
       setError(res.error);
-      pushToast(`Тариф: ${res.error}`, 'error');
+      if (res.status === 401) {
+        clearTenantSession();
+        clearImpersonation();
+        if (typeof window !== 'undefined') {
+          const next = encodeURIComponent(window.location.pathname || '/');
+          window.location.replace(`/login?next=${next}`);
+        }
+      }
+      /* Тост убран: ошибку показывает WorkspaceGate, двойные уведомления мешают. */
     }
     setLoading(false);
   }, [tenantId]);

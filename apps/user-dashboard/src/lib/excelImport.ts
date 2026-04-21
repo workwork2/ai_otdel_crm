@@ -153,6 +153,12 @@ function looseIdentity(row: Record<string, unknown>): {
   };
 }
 
+function simpleHash(s: string): string {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  return Math.abs(h).toString(36).slice(0, 12);
+}
+
 function parseNumber(v: unknown): number | undefined {
   if (v === undefined || v === null || v === '') return undefined;
   if (typeof v === 'number' && !Number.isNaN(v)) return v;
@@ -201,23 +207,46 @@ function buildSignals(
   };
 }
 
+export type ExcelParseMeta = {
+  sheetUsed: string;
+  rowCount: number;
+};
+
 /**
- * Парсит первый лист Excel в профили. Подстраивается под разную шапку и даже без шапки (col_1…).
- * Статус LTV и риск оттока всегда присваиваются алгоритмом (importSignals + enrich), а не копируются как есть.
+ * Парсит Excel: выбирает лист с максимумом непустых строк, подстраивается под шапку.
+ * Статус LTV и риск оттока — от алгоритма (importSignals + enrich).
  */
 export function parseExcelCustomers(buffer: ArrayBuffer): CustomerProfile[] {
+  const { customers } = parseExcelCustomersWithMeta(buffer);
+  return customers;
+}
+
+/** То же + метаданные (имя листа, число строк) для обратной связи в UI. */
+export function parseExcelCustomersWithMeta(buffer: ArrayBuffer): {
+  customers: CustomerProfile[];
+  meta: ExcelParseMeta | null;
+} {
   const wb = XLSX.read(buffer, { type: 'array' });
-  const name0 = wb.SheetNames[0];
-  if (!name0) return [];
-  const sheet = wb.Sheets[name0];
-  const rows = sheetToObjects(sheet);
-  if (!rows.length) return [];
+  if (!wb.SheetNames.length) return { customers: [], meta: null };
+
+  let bestName = wb.SheetNames[0];
+  let bestRows: Record<string, unknown>[] = [];
+  for (const sn of wb.SheetNames) {
+    const sheet = wb.Sheets[sn];
+    const rows = sheetToObjects(sheet);
+    if (rows.length > bestRows.length) {
+      bestRows = rows;
+      bestName = sn;
+    }
+  }
+
+  const rows = bestRows;
+  if (!rows.length) return { customers: [], meta: { sheetUsed: bestName, rowCount: 0 } };
 
   const headers = Object.keys(rows[0]);
   const roleMap = buildRoleMap(headers);
 
   const out: CustomerProfile[] = [];
-  const ts = Date.now();
 
   rows.forEach((row, i) => {
     const loose = looseIdentity(row);
@@ -236,8 +265,9 @@ export function parseExcelCustomers(buffer: ArrayBuffer): CustomerProfile[] {
 
     const type: CustomerProfile['type'] = signals.isB2B ? 'b2b' : 'b2c';
 
+    const idCore = simpleHash(`${phone}|${email}|${name}|${i}`);
     const raw: CustomerProfile = {
-      id: `IMP-${ts}-${i}`,
+      id: `IMP-${idCore}-${i}`,
       name,
       avatar: initials(name),
       phone,
@@ -262,7 +292,10 @@ export function parseExcelCustomers(buffer: ArrayBuffer): CustomerProfile[] {
     out.push(enrichCustomer({ ...raw, scoring: undefined }));
   });
 
-  return out;
+  return {
+    customers: out,
+    meta: { sheetUsed: bestName, rowCount: out.length },
+  };
 }
 
 export function buildExcelTemplate(): void {

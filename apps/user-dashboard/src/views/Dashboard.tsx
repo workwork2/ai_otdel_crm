@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import { useAudienceData } from '@/context/AudienceDataContext';
 import { useSubscription } from '@/context/SubscriptionContext';
 import { ClientMount } from '@/components/ClientMount';
-import { computeEESMetrics, formatRub, churnPreventionTrend } from '@/lib/eesMetrics';
+import { computeEESMetrics, formatRub, churnTrendFromClients } from '@/lib/eesMetrics';
 import {
   Area,
   AreaChart,
@@ -18,33 +18,52 @@ import {
   YAxis,
 } from 'recharts';
 
+function touchConversionLabel(clients: import('@/types').CustomerProfile[]): { value: string; sub: string } {
+  if (!clients.length) return { value: '—', sub: 'загрузите базу' };
+  let eligible = 0;
+  let converted = 0;
+  for (const c of clients) {
+    const hasAiTouch = c.history?.some((h) => h.sender === 'ai');
+    const hasPurchase = (c.purchases?.length ?? 0) > 0;
+    if (hasAiTouch) {
+      eligible++;
+      if (hasPurchase) converted++;
+    }
+  }
+  if (!eligible) return { value: '—', sub: 'нет касаний ИИ в истории клиентов' };
+  return {
+    value: `${Math.round((converted / eligible) * 100)}%`,
+    sub: 'доля с покупкой среди тех, у кого было касание ИИ',
+  };
+}
+
 export function Dashboard() {
-  const { clients } = useAudienceData();
+  const { clients, lastImportInfo } = useAudienceData();
   const { subscription } = useSubscription();
   const ees = useMemo(() => computeEESMetrics(clients), [clients]);
-  const churnData = useMemo(() => churnPreventionTrend(), []);
+  const churnData = useMemo(() => churnTrendFromClients(clients), [clients]);
+  const conv = useMemo(() => touchConversionLabel(clients), [clients]);
   const shareReturned =
     ees.churnRiskContactedCount > 0
       ? Math.round((ees.churnRiskReturnedCount / ees.churnRiskContactedCount) * 100)
       : 0;
 
   return (
-    <div className="flex-1 overflow-y-auto w-full mx-auto px-10 py-8 space-y-8 fade-in">
+    <div className="crm-page crm-page--wide custom-scrollbar space-y-6 sm:space-y-8 fade-in">
       <div>
-        <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-[#71717a] font-semibold mb-2">
+        <div className="crm-page-eyebrow">
           <Sparkles className="w-4 h-4 text-[#8b5cf6]" />
           EES — единая экономика сценариев
         </div>
-        <h1 className="text-3xl font-semibold text-white tracking-tight">Обзор эффективности</h1>
-        <p className="text-[#a1a1aa] mt-2 text-[15px] max-w-3xl">
-          Автоматизация касаний, удержание в зоне риска и атрибуция выручки к сообщениям ИИ. База:{' '}
-          <span className="text-white font-medium">{ees.clientsInBase}</span> клиентов — подходит для
-          retail, услуг и B2B.
+        <h1 className="crm-page-h1">Обзор эффективности</h1>
+        <p className="crm-page-lead max-w-3xl">
+          Цифры ниже считаются только по загруженной базе (Excel или API). Сейчас контактов:{' '}
+          <span className="text-white font-medium">{ees.clientsInBase}</span>.
         </p>
         {subscription?.planKey === 'trial' ? (
           <div className="mt-4 rounded-xl border border-violet-500/25 bg-violet-500/10 px-4 py-3 text-sm text-violet-100/95 max-w-3xl">
-            <span className="font-medium text-white">Пробный тариф:</span> часть функций (QA, Excel, расширенная
-            аналитика) открывается после апгрейда. Для показа клиенту переключение — в{' '}
+            <span className="font-medium text-white">Пробный тариф:</span> доступны Excel, аналитика, QA и
+            интеграции для демо; лимиты сообщений и базы — как в тарифе. Смена пакета — в{' '}
             <Link href="/billing" className="text-violet-200 underline underline-offset-2">
               Мой тариф
             </Link>
@@ -100,8 +119,13 @@ export function Dashboard() {
           }
           sub="очередь касаний"
         />
-        <StatCard title="КОНВЕРСИЯ ИЗ КАСАНИЯ" value="34%" sub="демо-оценка" subColor="text-[#10b981]" />
-        <StatCard title="RETENTION 90D" value="61%" sub="+4% к прошлому кварталу" subColor="text-[#10b981]" />
+        <StatCard title="КОНВЕРСИЯ ИЗ КАСАНИЯ" value={conv.value} sub={conv.sub} subColor="text-[#a1a1aa]" />
+        <StatCard
+          title="RETENTION 90D"
+          value="—"
+          sub="нужна история когорт в данных; пока не считаем"
+          subColor="text-[#71717a]"
+        />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -131,18 +155,26 @@ export function Dashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#1f1f22]">
-                {clients.slice(0, 6).map((c) => (
-                  <Fragment key={c.id}>
-                    <TableRow
-                      contact={c.name}
-                      desc={`${c.loyalty.tier} · ${c.type.toUpperCase()}`}
-                      segment={c.scoring?.churnSegment ?? '—'}
-                      metric={`${c.scoring?.riskIndex ?? '—'} риск · ${c.scoring?.priorityScore ?? '—'} приоритет`}
-                      touch={c.loyalty.nextAction.slice(0, 42) + '…'}
-                      status={(c.scoring?.riskIndex ?? 0) >= 60 ? 'yellow' : 'green'}
-                    />
-                  </Fragment>
-                ))}
+                {clients.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-10 text-center text-sm text-[#71717a]">
+                      Нет клиентов — импортируйте Excel в разделе «Клиенты».
+                    </td>
+                  </tr>
+                ) : (
+                  clients.slice(0, 6).map((c) => (
+                    <Fragment key={c.id}>
+                      <TableRow
+                        contact={c.name}
+                        desc={`${c.loyalty.tier} · ${c.type.toUpperCase()}`}
+                        segment={c.scoring?.churnSegment ?? '—'}
+                        metric={`${c.scoring?.riskIndex ?? '—'} риск · ${c.scoring?.priorityScore ?? '—'} приоритет`}
+                        touch={c.loyalty.nextAction.slice(0, 42) + '…'}
+                        status={(c.scoring?.riskIndex ?? 0) >= 60 ? 'yellow' : 'green'}
+                      />
+                    </Fragment>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -155,50 +187,56 @@ export function Dashboard() {
               Удержание: зона риска → возврат
             </h3>
             <div className="h-[200px] min-w-0 w-full">
-              <ClientMount minHeight={200}>
-                <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-                  <AreaChart data={churnData} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="gRet" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
-                        <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1f1f22" vertical={false} />
-                    <XAxis dataKey="week" stroke="#71717a" fontSize={10} tickLine={false} />
-                    <YAxis stroke="#71717a" fontSize={10} tickLine={false} />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: '#121214',
-                        border: '1px solid #1f1f22',
-                        borderRadius: '8px',
-                        fontSize: '12px',
-                        color: '#d4d4d8',
-                      }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="returned"
-                      name="Вернулись"
-                      stroke="#f59e0b"
-                      strokeWidth={2}
-                      fillOpacity={1}
-                      fill="url(#gRet)"
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="inRisk"
-                      name="В зоне риска"
-                      stroke="#71717a"
-                      strokeWidth={1}
-                      fillOpacity={0}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </ClientMount>
+              {churnData.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-sm text-[#71717a] px-4 text-center">
+                  Нет данных для графика — добавьте клиентов со скорингом.
+                </div>
+              ) : (
+                <ClientMount minHeight={200}>
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                    <AreaChart data={churnData} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="gRet" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
+                          <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1f1f22" vertical={false} />
+                      <XAxis dataKey="week" stroke="#71717a" fontSize={10} tickLine={false} />
+                      <YAxis stroke="#71717a" fontSize={10} tickLine={false} />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: '#121214',
+                          border: '1px solid #1f1f22',
+                          borderRadius: '8px',
+                          fontSize: '12px',
+                          color: '#d4d4d8',
+                        }}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="returned"
+                        name="Вернулись"
+                        stroke="#f59e0b"
+                        strokeWidth={2}
+                        fillOpacity={1}
+                        fill="url(#gRet)"
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="inRisk"
+                        name="В зоне риска"
+                        stroke="#71717a"
+                        strokeWidth={1}
+                        fillOpacity={0}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </ClientMount>
+              )}
             </div>
             <p className="text-[11px] text-[#71717a] mt-2">
-              Оранжевая зона — клиенты, вернувшиеся к покупке после сценария удержания (демо-тренд).
+              Срез по текущей базе: вернувшиеся и охват зоны риска (см. скоринг клиентов).
             </p>
           </div>
 
@@ -207,30 +245,26 @@ export function Dashboard() {
             <h3 className="text-[15px] font-medium text-white">Активные сценарии</h3>
           </div>
 
-          <div className="space-y-3">
-            <AutomationCard
-              title="Возврат ушедших"
-              trigger=">60 дней без покупки · зона риска"
-              action="Персональное касание · атрибуция выручки"
-            />
-            <AutomationCard
-              title="Анти-скидка"
-              trigger="Намерение купить без доп. бонуса"
-              action="Экономия на марже · «спасённые деньги»"
-            />
-            <AutomationCard
-              title="Продление B2B"
-              trigger="Окончание контракта / лицензии"
-              action="Telegram / email · up-sell"
-            />
+          <div className="crm-panel p-4 border border-[#1f1f22]">
+            <p className="text-sm text-[#a1a1aa] mb-3">
+              Сценарии автоматизаций настраиваются в отдельном разделе — там же статусы активных цепочек.
+            </p>
+            <Link
+              href="/automations"
+              className="inline-flex text-sm font-medium text-[#3b82f6] hover:text-[#60a5fa] underline underline-offset-2"
+            >
+              Открыть автоматизации →
+            </Link>
           </div>
 
           <div className="pt-2">
-            <h3 className="text-[15px] font-medium text-white mb-4">Лента</h3>
+            <h3 className="text-[15px] font-medium text-white mb-4">События</h3>
             <div className="space-y-4">
-              <FeedItem time="13:00" title="Импорт базы" desc="Excel объединён с текущей CRM-витриной" />
-              <FeedItem time="12:15" title="Скоринг обновлён" desc="Пересчёт сегментов оттока по чекам" />
-              <FeedItem time="10:42" title="EES" desc="Атрибуция выручки за апрель пересчитана" />
+              {lastImportInfo ? (
+                <FeedItem time="" title="Импорт / база" desc={lastImportInfo} />
+              ) : (
+                <p className="text-sm text-[#71717a]">История импортов появится после загрузки Excel.</p>
+              )}
             </div>
           </div>
         </div>

@@ -10,9 +10,11 @@ COPY apps/super-admin/package.json apps/super-admin/
 RUN npm ci
 
 COPY apps/user-dashboard ./apps/user-dashboard
+# Next.js ожидает каталог public при standalone-сборке в Docker
+RUN mkdir -p apps/user-dashboard/public
 
 ARG NEXT_PUBLIC_API_URL=http://localhost:3333
-ARG NEXT_PUBLIC_DEMO_TENANT_ID=t_demo
+ARG NEXT_PUBLIC_DEMO_TENANT_ID=
 ARG NEXT_PUBLIC_SUPER_APP_URL=http://localhost:3001
 ARG NEXT_PUBLIC_SUPPORT_EMAIL=hello@example.com
 

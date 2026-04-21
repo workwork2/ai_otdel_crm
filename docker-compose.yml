@@ -1,15 +1,30 @@
-# AI Отдел — полный стек: Nest API + панель клиента + супер-админка
-# Сборка из корня монорепозитория.
+# AI Отдел: PostgreSQL + Nest API + Next (клиент + super-admin)
 #
-# Перед запуском скопируйте .env.docker.example → .env (в корне) или задайте переменные в shell.
-#
+#   cp .env.docker.example .env
 #   docker compose up --build
 #
-# URL: http://localhost:3000 — клиенты · http://localhost:3001 — супер-админ · http://localhost:3333 — API
+# После старта: http://localhost:3001/login — первый визит создаёт главного админа (bootstrap).
 
 name: linearize-ai
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-linearize}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-linearize}
+      POSTGRES_DB: ${POSTGRES_DB:-linearize}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-linearize} -d ${POSTGRES_DB:-linearize}']
+      interval: 5s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
+
   api:
     build:
       context: .
@@ -17,24 +32,37 @@ services:
     ports:
       - "${API_PORT:-3333}:3333"
     environment:
-      PORT: "3333"
+      PORT: '3333'
+      DATABASE_URL: ${DATABASE_URL:-postgresql://linearize:linearize@postgres:5432/linearize}
+      # При старте API применяются SQL-миграции из apps/api/drizzle (Drizzle). Отключить: RUN_MIGRATIONS=false
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+      JWT_SECRET: ${JWT_SECRET:-change-docker-jwt-secret}
       SUPER_ADMIN_KEY: ${SUPER_ADMIN_KEY:-change-me-super-secret}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:3001}
-      DATA_PATH: data/state.json
-    volumes:
-      - api_state:/app/apps/api/data
+      USER_PORTAL_PUBLIC_URL: ${USER_PORTAL_PUBLIC_URL:-http://localhost:3000}
+      PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-}
+      PLATFORM_ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_SECURE: ${SMTP_SECURE:-true}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test:
         [
-          "CMD",
-          "node",
-          "-e",
+          'CMD',
+          'node',
+          '-e',
           "fetch('http://127.0.0.1:3333/v1/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))",
         ]
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 20s
+      start_period: 40s
 
   user-dashboard:
     build:
@@ -42,7 +70,7 @@ services:
       dockerfile: docker/Dockerfile.user-dashboard
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3333}
-        NEXT_PUBLIC_DEMO_TENANT_ID: ${NEXT_PUBLIC_DEMO_TENANT_ID:-t_demo}
+        NEXT_PUBLIC_DEMO_TENANT_ID: ${NEXT_PUBLIC_DEMO_TENANT_ID:-}
         NEXT_PUBLIC_SUPER_APP_URL: ${NEXT_PUBLIC_SUPER_APP_URL:-http://localhost:3001}
         NEXT_PUBLIC_SUPPORT_EMAIL: ${NEXT_PUBLIC_SUPPORT_EMAIL:-hello@example.com}
     ports:
@@ -51,7 +79,7 @@ services:
       api:
         condition: service_healthy
     environment:
-      PORT: "3000"
+      PORT: '3000'
 
   super-admin:
     build:
@@ -67,7 +95,7 @@ services:
       api:
         condition: service_healthy
     environment:
-      PORT: "3001"
+      PORT: '3001'
 
 volumes:
-  api_state:
+  pgdata:

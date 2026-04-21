@@ -18,6 +18,8 @@ export interface TenantWorkspace {
     name: string;
     category: string;
     status: 'connected' | 'available' | 'error';
+    /** Учётные данные и URL (хранятся в workspace; секреты маскируются в GET). */
+    config?: JsonRecord;
   }>;
   billing: {
     planKey: string;

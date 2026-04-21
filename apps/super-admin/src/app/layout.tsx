@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { Inter } from 'next/font/google';
-import { SuperAdminShell } from '@/components/shell/SuperAdminShell';
+import { ShellSwitcher } from '@/components/shell/ShellSwitcher';
 import './globals.css';
 import './shell.scss';
 import './super-theme.css';
@@ -40,7 +40,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body
         className={`${inter.className} antialiased sa-mesh text-zinc-300 h-full overflow-hidden`}
       >
-        <SuperAdminShell>{children}</SuperAdminShell>
+        <ShellSwitcher>{children}</ShellSwitcher>
       </body>
     </html>
   );

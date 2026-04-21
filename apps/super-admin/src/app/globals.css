@@ -6,3 +6,32 @@
   --color-zinc-900: #121214;
   --color-zinc-800: #1f1f22;
 }
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='range']):not([type='color']),
+  textarea,
+  select {
+    color-scheme: dark;
+    background-color: #121214;
+    color: #e4e4e7;
+    border-color: #3f3f46;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: #71717a;
+  }
+  select {
+    background-image: none;
+  }
+  select option {
+    background-color: #121214;
+    color: #e4e4e7;
+  }
+}

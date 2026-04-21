@@ -2,11 +2,13 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Headphones, ImagePlus, Send, Trash2 } from 'lucide-react';
+import { apiFetchJson } from '@/lib/api-client';
 import { getApiBaseUrl, getTenantIdClient, jsonTenantHeaders, tenantFetchHeaders } from '@/lib/backend-api';
 import { cn } from '@/lib/utils';
 import { isSupportChatBlocked } from '@/lib/platformSync';
+import { SUPPORT_CHAT_LEGACY_KEY, supportChatStorageKey } from '@/lib/tenant-local-storage';
+import { pushToast } from '@/lib/toast';
 
-const STORAGE_KEY = 'aura-support-chat-v1';
 const MAX_IMAGES_PER_MSG = 6;
 
 export type SupportMessage = {
@@ -25,11 +27,33 @@ const WELCOME: SupportMessage = {
   ts: Date.now(),
 };
 
-function loadMessages(): SupportMessage[] {
-  if (typeof window === 'undefined') return [WELCOME];
+function migrateLegacyChatToTenant(tenantId: string): SupportMessage[] | null {
+  if (typeof window === 'undefined' || !tenantId.trim()) return null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
+    const raw = localStorage.getItem(SUPPORT_CHAT_LEGACY_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as SupportMessage[];
+    if (!Array.isArray(p) || p.length === 0) {
+      localStorage.removeItem(SUPPORT_CHAT_LEGACY_KEY);
+      return null;
+    }
+    localStorage.setItem(supportChatStorageKey(tenantId), raw);
+    localStorage.removeItem(SUPPORT_CHAT_LEGACY_KEY);
+    return p;
+  } catch {
+    return null;
+  }
+}
+
+function loadMessages(tenantId: string): SupportMessage[] {
+  if (typeof window === 'undefined' || !tenantId.trim()) return [WELCOME];
+  try {
+    const key = supportChatStorageKey(tenantId);
+    let raw = localStorage.getItem(key);
+    if (!raw) {
+      const migrated = migrateLegacyChatToTenant(tenantId);
+      if (migrated) return migrated;
+    } else {
       const p = JSON.parse(raw) as SupportMessage[];
       if (Array.isArray(p) && p.length > 0) return p;
     }
@@ -39,9 +63,10 @@ function loadMessages(): SupportMessage[] {
   return [WELCOME];
 }
 
-function saveMessages(msgs: SupportMessage[]) {
+function saveMessages(tenantId: string, msgs: SupportMessage[]) {
+  if (!tenantId.trim()) return;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(msgs));
+    localStorage.setItem(supportChatStorageKey(tenantId), JSON.stringify(msgs));
   } catch {
     /* quota */
   }
@@ -50,9 +75,7 @@ function saveMessages(msgs: SupportMessage[]) {
 export function SupportChat() {
   const apiBase = getApiBaseUrl();
   const [tenantId, setTenantId] = useState(() => getTenantIdClient());
-  const [messages, setMessages] = useState<SupportMessage[]>(() =>
-    getApiBaseUrl() ? [WELCOME] : loadMessages()
-  );
+  const [messages, setMessages] = useState<SupportMessage[]>([WELCOME]);
   const [draft, setDraft] = useState('');
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [chatBlocked, setChatBlocked] = useState(false);
@@ -64,30 +87,36 @@ export function SupportChat() {
     syncTid();
     window.addEventListener('focus', syncTid);
     window.addEventListener('storage', syncTid);
+    window.addEventListener('linearize-tenant-auth', syncTid);
     return () => {
       window.removeEventListener('focus', syncTid);
       window.removeEventListener('storage', syncTid);
+      window.removeEventListener('linearize-tenant-auth', syncTid);
     };
   }, []);
 
   useEffect(() => {
+    const tid = tenantId.trim();
+    if (!tid) {
+      setMessages([WELCOME]);
+      return;
+    }
     if (!apiBase) {
-      setMessages(loadMessages());
+      setMessages(loadMessages(tid));
       return;
     }
     let cancelled = false;
     (async () => {
-      try {
-        const r = await fetch(`${apiBase}/v1/tenant/${tenantId}/support-chat`, {
-          headers: tenantFetchHeaders(),
-        });
-        if (cancelled) return;
-        if (r.ok) {
-          const data = (await r.json()) as SupportMessage[];
-          if (Array.isArray(data) && data.length > 0) setMessages(data);
-        }
-      } catch {
-        /* ignore */
+      const res = await apiFetchJson<SupportMessage[]>(
+        `${apiBase}/v1/tenant/${tid}/support-chat`,
+        { headers: tenantFetchHeaders(), silent: true, retries: 2 }
+      );
+      if (cancelled) return;
+      if (getTenantIdClient().trim() !== tid) return;
+      if (res.ok && Array.isArray(res.data)) {
+        setMessages(res.data.length > 0 ? res.data : [WELCOME]);
+      } else {
+        setMessages([WELCOME]);
       }
     })();
     return () => {
@@ -95,17 +124,44 @@ export function SupportChat() {
     };
   }, [apiBase, tenantId]);
 
+  /** Подтягиваем ответы поддержки с сервера без перезагрузки страницы. */
+  useEffect(() => {
+    if (!apiBase || !tenantId.trim()) return;
+    const tick = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      void (async () => {
+        const current = getTenantIdClient().trim();
+        if (!current || current !== tenantId.trim()) return;
+        const res = await apiFetchJson<SupportMessage[]>(
+          `${apiBase}/v1/tenant/${tenantId}/support-chat`,
+          { headers: tenantFetchHeaders(), silent: true, retries: 1 }
+        );
+        if (getTenantIdClient().trim() !== tenantId.trim()) return;
+        if (res.ok && Array.isArray(res.data)) {
+          setMessages(res.data.length > 0 ? res.data : [WELCOME]);
+        }
+      })();
+    };
+    const id = window.setInterval(tick, 12_000);
+    return () => clearInterval(id);
+  }, [apiBase, tenantId]);
+
   useEffect(() => {
     const syncBlock = () => {
       if (getApiBaseUrl()) {
         void (async () => {
           try {
-            const r = await fetch(`${getApiBaseUrl()}/v1/tenant/${getTenantIdClient()}/workspace-meta`, {
-              headers: tenantFetchHeaders(),
-            });
-            if (r.ok) {
-              const j = (await r.json()) as { supportChatBlocked?: boolean };
-              setChatBlocked(!!j.supportChatBlocked);
+            const base = getApiBaseUrl();
+            if (!base) {
+              setChatBlocked(isSupportChatBlocked());
+              return;
+            }
+            const res = await apiFetchJson<{ supportChatBlocked?: boolean }>(
+              `${base}/v1/tenant/${getTenantIdClient()}/workspace-meta`,
+              { headers: tenantFetchHeaders(), silent: true, retries: 1 }
+            );
+            if (res.ok) {
+              setChatBlocked(!!res.data.supportChatBlocked);
               return;
             }
           } catch {
@@ -133,7 +189,8 @@ export function SupportChat() {
   const appendMessage = useCallback((msg: SupportMessage) => {
     setMessages((prev) => {
       const next = [...prev, msg];
-      if (!getApiBaseUrl()) saveMessages(next);
+      const tid = getTenantIdClient().trim();
+      if (!getApiBaseUrl() && tid) saveMessages(tid, next);
       return next;
     });
   }, []);
@@ -175,7 +232,12 @@ export function SupportChat() {
     setPendingImages([]);
 
     const base = getApiBaseUrl();
+    const apiTid = getTenantIdClient().trim();
     if (base) {
+      if (!apiTid) {
+        pushToast('Нет организации — войдите снова', 'error');
+        return;
+      }
       setMessages((prev) => [...prev, msg]);
       void (async () => {
         const pushSystem = async (text: string) => {
@@ -187,25 +249,31 @@ export function SupportChat() {
             ts: Date.now(),
           };
           setMessages((prev) => [...prev, sm]);
-          await fetch(`${base}/v1/tenant/${tenantId}/support-chat`, {
+          void apiFetchJson(`${base}/v1/tenant/${apiTid}/support-chat`, {
             method: 'POST',
             headers: jsonTenantHeaders(),
             body: JSON.stringify({ role: 'system', text: sm.text, images: [] }),
-          }).catch(() => {});
-        };
-        try {
-          await fetch(`${base}/v1/tenant/${tenantId}/support-chat`, {
-            method: 'POST',
-            headers: jsonTenantHeaders(),
-            body: JSON.stringify({
-              role: 'user',
-              text: msg.text,
-              images: msg.images,
-            }),
+            silent: true,
+            retries: 0,
           });
+        };
+        const userRes = await apiFetchJson(`${base}/v1/tenant/${apiTid}/support-chat`, {
+          method: 'POST',
+          headers: jsonTenantHeaders(),
+          body: JSON.stringify({
+            role: 'user',
+            text: msg.text,
+            images: msg.images,
+          }),
+          silent: true,
+          retries: 1,
+        });
+        if (getTenantIdClient().trim() !== apiTid) return;
+        if (userRes.ok) {
           await pushSystem('Сообщение получено и передано в очередь поддержки платформы.');
-        } catch {
-          await pushSystem('Не удалось отправить сообщение на сервер. Проверьте API.');
+        } else {
+          pushToast(userRes.error || 'Не удалось отправить сообщение', 'error');
+          await pushSystem('Не удалось отправить сообщение на сервер. Проверьте API и ключ.');
         }
       })();
       return;
@@ -227,24 +295,29 @@ export function SupportChat() {
     if (!confirm('Очистить историю чата?')) return;
     const base = getApiBaseUrl();
     if (base) {
+      const delTid = getTenantIdClient().trim();
+      if (!delTid) {
+        pushToast('Нет организации — войдите снова', 'error');
+        return;
+      }
       void (async () => {
-        try {
-          const r = await fetch(`${base}/v1/tenant/${tenantId}/support-chat`, {
-            method: 'DELETE',
-            headers: tenantFetchHeaders(),
-          });
-          if (r.ok) {
-            const data = (await r.json()) as SupportMessage[];
-            if (Array.isArray(data)) setMessages(data);
-          }
-        } catch {
-          /* ignore */
-        }
+        const res = await apiFetchJson<SupportMessage[]>(`${base}/v1/tenant/${delTid}/support-chat`, {
+          method: 'DELETE',
+          headers: tenantFetchHeaders(),
+          silent: true,
+          retries: 1,
+        });
+        if (getTenantIdClient().trim() !== delTid) return;
+        if (res.ok) {
+          if (Array.isArray(res.data)) setMessages(res.data);
+        } else pushToast(res.error, 'error');
       })();
       return;
     }
-    localStorage.removeItem(STORAGE_KEY);
-    setMessages(loadMessages());
+    const tid = tenantId.trim();
+    if (tid) localStorage.removeItem(supportChatStorageKey(tid));
+    localStorage.removeItem(SUPPORT_CHAT_LEGACY_KEY);
+    setMessages(tid ? loadMessages(tid) : [WELCOME]);
   };
 
   const canSend = useMemo(
@@ -253,7 +326,7 @@ export function SupportChat() {
   );
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col w-full max-w-3xl mx-auto px-4 sm:px-6 py-6">
+    <div className="flex-1 min-h-0 min-w-0 flex flex-col w-full max-w-3xl mx-auto px-4 sm:px-6 py-4 sm:py-6 overflow-x-hidden">
       {chatBlocked ? (
         <div className="mb-4 rounded-xl border border-red-500/35 bg-red-950/40 px-4 py-3 text-sm text-red-200">
           Чат техподдержки для этого аккаунта <strong className="text-white">заблокирован</strong>{' '}

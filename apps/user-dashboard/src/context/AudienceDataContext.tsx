@@ -8,37 +8,19 @@ import React, {
   useState,
 } from 'react';
 import type { CustomerProfile } from '@/types';
-import { mockUniversalAudience } from '@/data';
 import { apiFetchJson } from '@/lib/api-client';
 import { getApiBaseUrl, getTenantIdClient, jsonTenantHeaders, tenantFetchHeaders } from '@/lib/backend-api';
 import { enrichCustomer } from '@/lib/scoring';
-import { parseExcelCustomers, buildExcelTemplate } from '@/lib/excelImport';
+import { parseExcelCustomersWithMeta, buildExcelTemplate } from '@/lib/excelImport';
 import { useSubscription } from '@/context/SubscriptionContext';
 import { pushToast } from '@/lib/toast';
-
-const STORAGE_KEY = 'aura-audience-db-v2';
-
-function loadInitial(): CustomerProfile[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as CustomerProfile[];
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed.map((c) => enrichCustomer(c));
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  return mockUniversalAudience.map((c) => enrichCustomer(c));
-}
 
 type AudienceDataContextValue = {
   clients: CustomerProfile[];
   setClients: React.Dispatch<React.SetStateAction<CustomerProfile[]>>;
   replaceAll: (next: CustomerProfile[]) => void;
   mergeImported: (imported: CustomerProfile[]) => void;
-  resetToDemo: () => void;
+  clearAudience: () => void;
   downloadTemplate: () => void;
   importError: string | null;
   importExcelFile: (file: File) => Promise<void>;
@@ -58,26 +40,27 @@ export function AudienceDataProvider({ children }: { children: React.ReactNode }
     sync();
     window.addEventListener('focus', sync);
     window.addEventListener('storage', sync);
+    window.addEventListener('linearize-tenant-auth', sync);
     return () => {
       window.removeEventListener('focus', sync);
       window.removeEventListener('storage', sync);
+      window.removeEventListener('linearize-tenant-auth', sync);
     };
   }, []);
 
-  const [clients, setClients] = useState<CustomerProfile[]>(() => {
-    if (typeof window !== 'undefined' && getApiBaseUrl()) return [];
-    return loadInitial();
-  });
+  const [clients, setClients] = useState<CustomerProfile[]>([]);
   const [importError, setImportError] = useState<string | null>(null);
   const [lastImportInfo, setLastImportInfo] = useState<string | null>(null);
-  const [hydratedFromApi, setHydratedFromApi] = useState(() => !getApiBaseUrl());
+  const [hydratedFromApi, setHydratedFromApi] = useState(false);
 
   useEffect(() => {
-    if (!apiBase) {
+    if (!apiBase || !tenantId.trim()) {
       setHydratedFromApi(true);
+      setClients([]);
       return;
     }
     let cancelled = false;
+    setHydratedFromApi(false);
     (async () => {
       const res = await apiFetchJson<CustomerProfile[]>(
         `${apiBase}/v1/tenant/${tenantId}/customers`,
@@ -86,14 +69,10 @@ export function AudienceDataProvider({ children }: { children: React.ReactNode }
       if (cancelled) return;
       if (res.ok && Array.isArray(res.data)) {
         skipNextRemotePersist.current = true;
-        setClients(
-          res.data.length > 0
-            ? res.data.map((c) => enrichCustomer(c))
-            : mockUniversalAudience.map((c) => enrichCustomer(c))
-        );
+        setClients(res.data.map((c) => enrichCustomer(c)));
       } else {
         skipNextRemotePersist.current = true;
-        setClients(loadInitial());
+        setClients([]);
       }
       if (!cancelled) setHydratedFromApi(true);
     })();
@@ -103,22 +82,15 @@ export function AudienceDataProvider({ children }: { children: React.ReactNode }
   }, [apiBase, tenantId]);
 
   useEffect(() => {
-    if (!hydratedFromApi) return;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(clients));
-    } catch {
-      /* quota */
-    }
-  }, [clients, hydratedFromApi]);
-
-  useEffect(() => {
     if (!apiBase || !hydratedFromApi) return;
+    if (!tenantId.trim()) return;
     if (skipNextRemotePersist.current) {
       skipNextRemotePersist.current = false;
       return;
     }
+    const id = tenantId.trim();
     const t = setTimeout(() => {
-      void apiFetchJson(`${apiBase}/v1/tenant/${tenantId}/customers`, {
+      void apiFetchJson(`${apiBase}/v1/tenant/${id}/customers`, {
         method: 'PUT',
         headers: jsonTenantHeaders(),
         body: JSON.stringify(clients),
@@ -147,23 +119,22 @@ export function AudienceDataProvider({ children }: { children: React.ReactNode }
     });
   }, []);
 
-  const resetToDemo = useCallback(() => {
-    localStorage.removeItem(STORAGE_KEY);
-    const next = mockUniversalAudience.map((c) => enrichCustomer(c));
+  const clearAudience = useCallback(() => {
     skipNextRemotePersist.current = true;
-    setClients(next);
+    setClients([]);
     setLastImportInfo(null);
     setImportError(null);
     const base = getApiBaseUrl();
-    if (base) {
-      void apiFetchJson(`${base}/v1/tenant/${tenantId}/customers`, {
+    const id = getTenantIdClient().trim();
+    if (base && id) {
+      void apiFetchJson(`${base}/v1/tenant/${id}/customers`, {
         method: 'PUT',
         headers: jsonTenantHeaders(),
-        body: JSON.stringify(next),
+        body: JSON.stringify([]),
         retries: 1,
       });
     }
-  }, [tenantId]);
+  }, []);
 
   const downloadTemplate = useCallback(() => {
     buildExcelTemplate();
@@ -171,6 +142,11 @@ export function AudienceDataProvider({ children }: { children: React.ReactNode }
 
   const importExcelFile = useCallback(async (file: File) => {
     setImportError(null);
+    const tid = getTenantIdClient().trim();
+    if (apiBase && !tid) {
+      setImportError('Сначала войдите в кабинет — не указана организация.');
+      return;
+    }
     const lower = file.name.toLowerCase();
     if (!lower.endsWith('.xlsx') && !lower.endsWith('.xls')) {
       setImportError('Нужен файл Excel (.xlsx или .xls)');
@@ -178,9 +154,13 @@ export function AudienceDataProvider({ children }: { children: React.ReactNode }
     }
     try {
       const buf = await file.arrayBuffer();
-      const imported = parseExcelCustomers(buf);
+      const { customers: imported, meta } = parseExcelCustomersWithMeta(buf);
       if (imported.length === 0) {
-        setImportError('В файле нет строк с данными. Проверьте первый лист.');
+        setImportError(
+          meta
+            ? `На листе «${meta.sheetUsed}» нет строк с данными. Проверьте шапку и заполненность.`
+            : 'В файле нет листов с данными.'
+        );
         return;
       }
 
@@ -193,7 +173,7 @@ export function AudienceDataProvider({ children }: { children: React.ReactNode }
           return;
         }
         const res = await apiFetchJson<CustomerProfile[]>(
-          `${apiBase}/v1/tenant/${tenantId}/customers/merge`,
+          `${apiBase}/v1/tenant/${tid}/customers/merge`,
           {
             method: 'POST',
             headers: jsonTenantHeaders(),
@@ -207,17 +187,21 @@ export function AudienceDataProvider({ children }: { children: React.ReactNode }
         }
         skipNextRemotePersist.current = true;
         setClients(res.data.map((c) => enrichCustomer(c)));
-        setLastImportInfo(`Добавлено из «${file.name}» (сервер объединил базу)`);
-        pushToast(`Импорт: +${imported.length} контактов`, 'success');
+        const sheetHint = meta ? ` · лист «${meta.sheetUsed}»` : '';
+        setLastImportInfo(
+          `Файл «${file.name}»${sheetHint}: ${imported.length} строк → сервер объединил с базой`
+        );
+        pushToast(`Импорт: ${imported.length} контактов${sheetHint}`, 'success');
         return;
       }
 
       mergeImported(imported);
-      setLastImportInfo(`Добавлено ${imported.length} контактов из «${file.name}»`);
+      const sheetHint = meta ? ` (лист «${meta.sheetUsed}»)` : '';
+      setLastImportInfo(`Добавлено ${imported.length} контактов из «${file.name}»${sheetHint}`);
     } catch (e) {
       setImportError(e instanceof Error ? e.message : 'Не удалось прочитать файл');
     }
-  }, [apiBase, tenantId, has, mergeImported]);
+  }, [apiBase, has, mergeImported]);
 
   const value = useMemo(
     () => ({
@@ -225,7 +209,7 @@ export function AudienceDataProvider({ children }: { children: React.ReactNode }
       setClients,
       replaceAll,
       mergeImported,
-      resetToDemo,
+      clearAudience,
       downloadTemplate,
       importError,
       importExcelFile,
@@ -235,7 +219,7 @@ export function AudienceDataProvider({ children }: { children: React.ReactNode }
       clients,
       replaceAll,
       mergeImported,
-      resetToDemo,
+      clearAudience,
       downloadTemplate,
       importError,
       importExcelFile,

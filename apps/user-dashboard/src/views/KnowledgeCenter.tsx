@@ -18,16 +18,14 @@ import {
 
 export function KnowledgeCenter() {
   return (
-    <div className="flex-1 overflow-y-auto w-full max-w-3xl mx-auto px-4 sm:px-8 lg:px-10 py-8 sm:py-10 space-y-8 sm:space-y-10 fade-in pb-20">
+    <div className="crm-page crm-page--narrow custom-scrollbar space-y-6 sm:space-y-10 fade-in pb-16 sm:pb-20">
       <div>
-        <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-[#71717a] font-semibold mb-2">
+        <div className="crm-page-eyebrow">
           <BookOpen className="w-4 h-4 text-[#8b5cf6]" />
           Центр знаний
         </div>
-        <h1 className="text-2xl sm:text-3xl font-semibold text-white tracking-tight">
-          Как устроена платформа AI Отдела
-        </h1>
-        <p className="text-[#a1a1aa] mt-3 text-[15px] leading-relaxed max-w-prose">
+        <h1 className="crm-page-h1">Как устроена платформа AI Отдела</h1>
+        <p className="crm-page-lead max-w-prose mt-3">
           Единое место для правил скоринга, импорта базы, метрик EES, диалогов и интеграций. Здесь собрана
           логика, которая одинаково применима к магазину, сервисной компании или B2B.
         </p>
@@ -154,8 +152,8 @@ export function KnowledgeCenter() {
           <div className="rounded-lg border border-[#27272a] bg-[#121214]/80 p-4">
             <h3 className="text-white font-medium">Trial</h3>
             <p className="text-[#a1a1aa] mt-1">
-              Бесплатный пробный период (~14 дней): ограниченные сообщения и размер базы, базовые сценарии и
-              импорт. Подходит для оценки качества диалогов без обязательств.
+              Пробный период: те же разделы панели, что и на платных тарифах (Excel, аналитика, QA,
+              интеграции), с лимитами по сообщениям и размеру базы. Подходит для пилота без обязательств.
             </p>
           </div>
           <div className="rounded-lg border border-[#27272a] bg-[#121214]/80 p-4">

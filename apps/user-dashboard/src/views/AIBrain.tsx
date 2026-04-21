@@ -24,8 +24,7 @@ import { refineMarketingCopy } from '@/lib/aiAssist';
 import type { DiscountRule, PromotionItem } from '@/types';
 import { useSubscription } from '@/context/SubscriptionContext';
 import { pushToast } from '@/lib/toast';
-
-const STORAGE_KEY = 'aura-ai-brain-v1';
+import { NativeSelect } from '@/components/ui/NativeSelect';
 
 interface BrainState {
   tone: number;
@@ -47,49 +46,33 @@ const defaultState = (): BrainState => ({
     'Ты — вежливый ИИ-ассистент бренда. Помогаешь с заказами, акциями и лояльностью. Не обещай то, чего нет в правилах ниже.',
   brandVoicePrompt:
     'Обращайся на «вы», короткие абзацы, без канцелярита. При необходимости уточняй детали заказа.',
-  discounts: [
-    {
-      id: 'd1',
-      code: 'WELCOME10',
-      percent: 10,
-      description: 'Приветственная скидка для новых клиентов после первой покупки.',
-      active: true,
-    },
-    {
-      id: 'd2',
-      code: 'LOYAL15',
-      percent: 15,
-      description: 'Для уровня «Серебро» и выше на категорию «повторная покупка».',
-      active: true,
-    },
-  ],
-  promotions: [
-    {
-      id: 'p1',
-      title: 'Весенняя коллекция',
-      body: 'До 30 апреля — вторая позиция в чеке со скидкой 10% при оплате картой.',
-      validUntil: '2026-04-30',
-      active: true,
-    },
-    {
-      id: 'p2',
-      title: 'День рождения',
-      body: 'В день и ±3 дня — персональный промокод на 12% на один заказ.',
-      validUntil: '2026-12-31',
-      active: true,
-    },
-  ],
+  discounts: [],
+  promotions: [],
 });
 
-function loadState(): BrainState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultState();
-    const parsed = JSON.parse(raw) as Partial<BrainState>;
-    return { ...defaultState(), ...parsed, discounts: parsed.discounts ?? defaultState().discounts, promotions: parsed.promotions ?? defaultState().promotions };
-  } catch {
-    return defaultState();
+function looksLikeAiConfigStub(text: string): boolean {
+  return /apps\/api\/\.env|AI_PRIMARY_PROVIDER|GEMINI_API_KEY|ANTHROPIC_API_KEY|Перезапустите API/i.test(
+    text
+  );
+}
+
+/** Ответ «НАЗВАНИЕ: … / ТЕКСТ: …» или эвристика по строкам. */
+function parsePromotionAiSections(raw: string): { title: string; body: string } {
+  const t = raw.trim();
+  const titleM = t.match(/НАЗВАНИЕ:\s*([^\n]+)/i);
+  const bodyM = t.match(/ТЕКСТ:\s*([\s\S]+)/i);
+  let title = titleM?.[1]?.replace(/\s+/g, ' ').trim() ?? '';
+  let body = bodyM?.[1]?.trim() ?? '';
+  if (!title && !body) {
+    const lines = t.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length >= 2) {
+      title = lines[0]!.slice(0, 100);
+      body = lines.slice(1).join('\n');
+    } else if (lines.length === 1) {
+      body = lines[0]!;
+    }
   }
+  return { title, body };
 }
 
 export function AIBrain() {
@@ -106,16 +89,18 @@ export function AIBrain() {
     sync();
     window.addEventListener('focus', sync);
     window.addEventListener('storage', sync);
+    window.addEventListener('linearize-tenant-auth', sync);
     return () => {
       window.removeEventListener('focus', sync);
       window.removeEventListener('storage', sync);
+      window.removeEventListener('linearize-tenant-auth', sync);
     };
   }, []);
 
   useEffect(() => {
     const base = getApiBaseUrl();
-    if (!base) {
-      setState(loadState());
+    if (!base || !tenantId.trim()) {
+      setState(defaultState());
       return;
     }
     let cancelled = false;
@@ -125,20 +110,21 @@ export function AIBrain() {
           headers: tenantFetchHeaders(),
         });
         if (cancelled) return;
+        if (getTenantIdClient().trim() !== tenantId) return;
         if (r.ok) {
           const b = (await r.json()) as Partial<BrainState>;
           const def = defaultState();
           setState({
             ...def,
             ...b,
-            discounts: Array.isArray(b.discounts) ? b.discounts : def.discounts,
-            promotions: Array.isArray(b.promotions) ? b.promotions : def.promotions,
+            discounts: Array.isArray(b.discounts) ? b.discounts : [],
+            promotions: Array.isArray(b.promotions) ? b.promotions : [],
           });
         } else {
-          setState(loadState());
+          setState(defaultState());
         }
       } catch {
-        if (!cancelled) setState(loadState());
+        if (!cancelled) setState(defaultState());
       }
     })();
     return () => {
@@ -146,26 +132,33 @@ export function AIBrain() {
     };
   }, [tenantId]);
 
-  const persist = useCallback((next: BrainState) => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    setSavedAt(new Date().toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit' }));
-  }, []);
-
   const handleSave = () => {
-    persist(state);
     const base = getApiBaseUrl();
-    if (base) {
-      void fetch(`${base}/v1/tenant/${tenantId}/brain`, {
+    const tid = getTenantIdClient().trim();
+    if (!base || !tid) {
+      pushToast('Нет связи с API или организацией', 'error');
+      return;
+    }
+    void (async () => {
+      const r = await fetch(`${base}/v1/tenant/${tid}/brain`, {
         method: 'PUT',
         headers: jsonTenantHeaders(),
         body: JSON.stringify(state),
-      }).catch(() => {});
-    }
+      });
+      if (getTenantIdClient().trim() !== tid) return;
+      if (r.ok) {
+        setSavedAt(new Date().toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit' }));
+        pushToast('Настройки ИИ сохранены', 'success');
+      } else {
+        pushToast('Не удалось сохранить', 'error');
+      }
+    })();
   };
 
   const onPromptFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !file.name.endsWith('.txt')) return;
+    const lower = file?.name.toLowerCase() ?? '';
+    if (!file || (!lower.endsWith('.txt') && !lower.endsWith('.md'))) return;
     const reader = new FileReader();
     reader.onload = () => {
       const text = String(reader.result ?? '');
@@ -186,9 +179,78 @@ export function AIBrain() {
     const field = key;
     setAiLoading(field);
     const { text, error } = await refineMarketingCopy(instruction, state[field]);
-    setState((s) => ({ ...s, [field]: error ? s[field] : text }));
     setAiLoading(null);
-    if (error) console.warn('AI refine:', error);
+    if (error?.trim()) {
+      pushToast(error.trim().slice(0, 400), 'error');
+      return;
+    }
+    const trimmed = text.trim();
+    if (!trimmed || looksLikeAiConfigStub(trimmed)) {
+      pushToast(
+        'ИИ не вернул текст. Задайте GEMINI_API_KEY / ANTHROPIC_API_KEY в apps/api/.env или NEXT_PUBLIC_GEMINI_API_KEY в панели.',
+        'error'
+      );
+      return;
+    }
+    setState((s) => ({ ...s, [field]: trimmed }));
+  };
+
+  const generateSystemPrompt = async () => {
+    if (!canRefine) {
+      pushToast('ИИ-доработка текстов доступна с тарифа Starter и выше', 'error');
+      return;
+    }
+    setAiLoading('g-systemPrompt');
+    const instruction =
+      'С нуля составь системный промпт для чат-бота интернет-магазина или сервиса на русском: роль ассистента, что может и чего не может, когда передать человеку. 6–14 предложений, конкретно, без воды. Только текст промпта, без заголовков «Системный промпт».';
+    const draft = state.systemPrompt.trim()
+      ? `Можно опереться на идеи черновика и переписать полностью:\n${state.systemPrompt}`
+      : 'Черновика нет — придумай с нуля под типичный B2C.';
+    const { text, error } = await refineMarketingCopy(instruction, draft);
+    setAiLoading(null);
+    if (error?.trim()) {
+      pushToast(error.trim().slice(0, 400), 'error');
+      return;
+    }
+    const trimmed = text.trim();
+    if (!trimmed || looksLikeAiConfigStub(trimmed)) {
+      pushToast(
+        'ИИ не вернул текст. Задайте ключи на API или NEXT_PUBLIC_GEMINI_API_KEY в панели.',
+        'error'
+      );
+      return;
+    }
+    setState((s) => ({ ...s, systemPrompt: trimmed }));
+    pushToast('Системный промпт сгенерирован', 'success');
+  };
+
+  const generateBrandVoicePrompt = async () => {
+    if (!canRefine) {
+      pushToast('ИИ-доработка текстов доступна с тарифа Starter и выше', 'error');
+      return;
+    }
+    setAiLoading('g-brandVoicePrompt');
+    const instruction =
+      'С нуля опиши голос бренда для переписки с клиентом на русском: обращение на «вы» или «ты», длина сообщений, эмодзи уместны или нет, чего избегать. 4–8 предложений. Только текст гайда, без преамбулы.';
+    const draft = state.brandVoicePrompt.trim()
+      ? `Черновик (можно заменить полностью):\n${state.brandVoicePrompt}`
+      : 'Черновика нет.';
+    const { text, error } = await refineMarketingCopy(instruction, draft);
+    setAiLoading(null);
+    if (error?.trim()) {
+      pushToast(error.trim().slice(0, 400), 'error');
+      return;
+    }
+    const trimmed = text.trim();
+    if (!trimmed || looksLikeAiConfigStub(trimmed)) {
+      pushToast(
+        'ИИ не вернул текст. Задайте ключи на API или NEXT_PUBLIC_GEMINI_API_KEY в панели.',
+        'error'
+      );
+      return;
+    }
+    setState((s) => ({ ...s, brandVoicePrompt: trimmed }));
+    pushToast('Голос бренда сгенерирован', 'success');
   };
 
   const refineDiscountDesc = async (id: string) => {
@@ -199,15 +261,64 @@ export function AIBrain() {
     const row = state.discounts.find((d) => d.id === id);
     if (!row) return;
     setAiLoading(`d-${id}`);
-    const { text } = await refineMarketingCopy(
-      'Сделай описание правила скидки короче и яснее для операторов и ИИ, сохрани процент и код.',
-      `${row.code} ${row.percent}% — ${row.description}`
-    );
+    const instruction =
+      'Дай 1–2 короткие фразы: кому и когда скидка, что получает клиент. Простой язык для оператора и для контекста ИИ. ' +
+      'Ответ — только текст описания. Код промо и процент не дублируй (они задаются в полях формы).';
+    const draft = [
+      `Код: ${row.code}`,
+      `Процент: ${row.percent}%`,
+      `Описание сейчас: ${row.description.trim() || '—'}`,
+    ].join('\n');
+    const { text, error } = await refineMarketingCopy(instruction, draft);
+    setAiLoading(null);
+    if (error?.trim()) {
+      pushToast(error.trim().slice(0, 400), 'error');
+      return;
+    }
+    const trimmed = text.trim();
+    if (!trimmed || looksLikeAiConfigStub(trimmed)) {
+      pushToast(
+        'ИИ не вернул текст. Задайте ключи на API или NEXT_PUBLIC_GEMINI_API_KEY в панели.',
+        'error'
+      );
+      return;
+    }
     setState((s) => ({
       ...s,
-      discounts: s.discounts.map((d) => (d.id === id ? { ...d, description: text } : d)),
+      discounts: s.discounts.map((d) => (d.id === id ? { ...d, description: trimmed } : d)),
     }));
+  };
+
+  const generateDiscountDesc = async (id: string) => {
+    if (!canRefine) {
+      pushToast('ИИ-доработка текстов доступна с тарифа Starter и выше', 'error');
+      return;
+    }
+    const row = state.discounts.find((d) => d.id === id);
+    if (!row) return;
+    setAiLoading(`gd-${id}`);
+    const instruction =
+      'С нуля придумай короткое описание скидки/промокода для покупателя на русском (1–2 предложения): кому выгодно, как применить при заказе. Простой разговорный язык. Только текст описания, без префикса «Описание:».';
+    const draft = `Код (для контекста, не обязательно произносить клиенту дословно): ${row.code}\nПроцент: ${row.percent}%`;
+    const { text, error } = await refineMarketingCopy(instruction, draft);
     setAiLoading(null);
+    if (error?.trim()) {
+      pushToast(error.trim().slice(0, 400), 'error');
+      return;
+    }
+    const trimmed = text.trim();
+    if (!trimmed || looksLikeAiConfigStub(trimmed)) {
+      pushToast(
+        'ИИ не вернул текст. Задайте ключи на API или NEXT_PUBLIC_GEMINI_API_KEY в панели.',
+        'error'
+      );
+      return;
+    }
+    setState((s) => ({
+      ...s,
+      discounts: s.discounts.map((d) => (d.id === id ? { ...d, description: trimmed } : d)),
+    }));
+    pushToast('Описание промокода сгенерировано', 'success');
   };
 
   const refinePromotionBody = async (id: string) => {
@@ -218,15 +329,79 @@ export function AIBrain() {
     const row = state.promotions.find((p) => p.id === id);
     if (!row) return;
     setAiLoading(`p-${id}`);
-    const { text } = await refineMarketingCopy(
+    const { text, error } = await refineMarketingCopy(
       'Перепиши текст акции для клиента: дружелюбно, без воды, с дедлайном если уместно.',
       `${row.title}. ${row.body} До ${row.validUntil}.`
     );
+    setAiLoading(null);
+    if (error?.trim()) {
+      pushToast(error.trim().slice(0, 400), 'error');
+      return;
+    }
+    const trimmed = text.trim();
+    if (!trimmed || looksLikeAiConfigStub(trimmed)) {
+      pushToast(
+        'ИИ не вернул текст. Задайте ключи на API или NEXT_PUBLIC_GEMINI_API_KEY в панели.',
+        'error'
+      );
+      return;
+    }
     setState((s) => ({
       ...s,
-      promotions: s.promotions.map((p) => (p.id === id ? { ...p, body: text } : p)),
+      promotions: s.promotions.map((p) => (p.id === id ? { ...p, body: trimmed } : p)),
     }));
+  };
+
+  const generatePromotionCard = async (id: string) => {
+    if (!canRefine) {
+      pushToast('ИИ-доработка текстов доступна с тарифа Starter и выше', 'error');
+      return;
+    }
+    const row = state.promotions.find((p) => p.id === id);
+    if (!row) return;
+    setAiLoading(`gp-${id}`);
+    const instruction = [
+      'Придумай с нуля название и текст акции для клиента на русском, дружелюбно, без воды.',
+      `Дата окончания (если указана): ${row.validUntil}.`,
+      'Строго соблюдай формат — две секции, слова НАЗВАНИЕ и ТЕКСТ заглавными с двоеточием:',
+      'НАЗВАНИЕ: <короткое название, одна строка>',
+      'ТЕКСТ: <условия для клиента, 1–3 коротких абзаца>',
+    ].join('\n');
+    const draft = row.title.trim() || row.body.trim()
+      ? `Черновик (можно заменить полностью):\nНазвание: ${row.title}\nТекст: ${row.body || '—'}`
+      : 'Черновика нет — придумай тематическую акцию сам (например сезонная или на первый заказ).';
+    const { text, error } = await refineMarketingCopy(instruction, draft);
     setAiLoading(null);
+    if (error?.trim()) {
+      pushToast(error.trim().slice(0, 400), 'error');
+      return;
+    }
+    const trimmed = text.trim();
+    if (!trimmed || looksLikeAiConfigStub(trimmed)) {
+      pushToast(
+        'ИИ не вернул текст. Задайте ключи на API или NEXT_PUBLIC_GEMINI_API_KEY в панели.',
+        'error'
+      );
+      return;
+    }
+    const { title: newTitle, body: newBody } = parsePromotionAiSections(trimmed);
+    if (!newBody.trim()) {
+      pushToast('ИИ вернул ответ без текста акции — попробуйте ещё раз.', 'error');
+      return;
+    }
+    setState((s) => ({
+      ...s,
+      promotions: s.promotions.map((p) =>
+        p.id === id
+          ? {
+              ...p,
+              title: newTitle.trim() || p.title,
+              body: newBody.trim(),
+            }
+          : p
+      ),
+    }));
+    pushToast('Название и текст акции сгенерированы', 'success');
   };
 
   const addDiscount = () => {
@@ -258,20 +433,23 @@ export function AIBrain() {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto w-full max-w-4xl mx-auto px-10 py-10 space-y-10 fade-in pb-24">
+    <div className="crm-page crm-page--narrow custom-scrollbar space-y-8 sm:space-y-10 fade-in pb-20 sm:pb-24">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-semibold text-white tracking-tight flex items-center gap-3">
-            <Sparkles className="w-8 h-8 text-[#3b82f6]" /> Настройки ИИ-Маркетолога
+        <div className="min-w-0">
+          <h1 className="crm-page-h1 flex items-center gap-3 flex-wrap">
+            <Sparkles className="w-7 h-7 sm:w-8 sm:h-8 text-[#3b82f6] shrink-0" />
+            <span>Настройки ИИ-Маркетолога</span>
           </h1>
-          <p className="text-[#a1a1aa] mt-3 max-w-2xl text-[15px] leading-relaxed">
+          <p className="crm-page-lead max-w-2xl mt-3">
             Промпты, скидки и акции попадают в контекст модели: так ИИ говорит в голосе бренда и не
-            нарушает ваши правила. Тексты можно править вручную или дорабатывать через ИИ (бэкенд:
-            Anthropic, при отсутствии ключа — OpenAI / Gemini).
+            нарушает ваши правила. Кнопки «Сгенерировать» и «Доработать с ИИ» ходят в API; модель Gemini
+            задаётся{' '}
+            <code className="text-xs text-[#a1a1aa]">GEMINI_MODEL</code> в apps/api/.env (по умолчанию{' '}
+            <code className="text-xs text-[#a1a1aa]">gemini-2.5-flash</code>).
           </p>
           {!canRefine && subscription ? (
             <p className="mt-3 text-sm text-amber-200/90 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 max-w-2xl">
-              Кнопки «Доработать с ИИ» отключены на пробном тарифе.{' '}
+              Кнопки ИИ для текстов отключены на текущем тарифе.{' '}
               <Link href="/billing" className="text-amber-200 underline underline-offset-2">
                 Сменить тариф
               </Link>
@@ -306,7 +484,7 @@ export function AIBrain() {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".txt"
+            accept=".txt,.md,text/plain,text/markdown"
             className="hidden"
             onChange={onPromptFile}
           />
@@ -316,31 +494,46 @@ export function AIBrain() {
             className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[#1f1f22] text-sm text-[#d4d4d8] hover:bg-[#121214]"
           >
             <Upload className="w-4 h-4" />
-            Загрузить .txt
+            Загрузить .txt / .md
           </button>
         </div>
 
         <div>
-          <div className="flex justify-between items-center mb-2">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-2">
             <label className="text-sm font-medium text-[#d4d4d8]">Системный промпт</label>
-            <button
-              type="button"
-              disabled={!!aiLoading || !canRefine}
-              onClick={() =>
-                refineField(
-                  'systemPrompt',
-                  'Улучши системный промпт: чёткие запреты, роль, границы ответственности. Язык: русский.'
-                )
-              }
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#8b5cf6] hover:text-[#a78bfa] disabled:opacity-50"
-            >
-              {aiLoading === 'systemPrompt' ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Wand2 className="w-3.5 h-3.5" />
-              )}
-              Доработать с ИИ
-            </button>
+            <div className="flex flex-wrap gap-2 justify-end">
+              <button
+                type="button"
+                disabled={!!aiLoading || !canRefine}
+                onClick={() => void generateSystemPrompt()}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-400 hover:text-emerald-300 disabled:opacity-50"
+              >
+                {aiLoading === 'g-systemPrompt' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5" />
+                )}
+                Сгенерировать с ИИ
+              </button>
+              <button
+                type="button"
+                disabled={!!aiLoading || !canRefine}
+                onClick={() =>
+                  void refineField(
+                    'systemPrompt',
+                    'Улучши системный промпт: чёткие запреты, роль, границы ответственности. Язык: русский.'
+                  )
+                }
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#8b5cf6] hover:text-[#a78bfa] disabled:opacity-50"
+              >
+                {aiLoading === 'systemPrompt' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Wand2 className="w-3.5 h-3.5" />
+                )}
+                Доработать с ИИ
+              </button>
+            </div>
           </div>
           <textarea
             value={state.systemPrompt}
@@ -352,26 +545,41 @@ export function AIBrain() {
         </div>
 
         <div>
-          <div className="flex justify-between items-center mb-2">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-2">
             <label className="text-sm font-medium text-[#d4d4d8]">Голос бренда</label>
-            <button
-              type="button"
-              disabled={!!aiLoading || !canRefine}
-              onClick={() =>
-                refineField(
-                  'brandVoicePrompt',
-                  'Сформулируй краткий гайдлайн тона: обращение, длина фраз, эмодзи по желанию.'
-                )
-              }
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#8b5cf6] hover:text-[#a78bfa] disabled:opacity-50"
-            >
-              {aiLoading === 'brandVoicePrompt' ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Wand2 className="w-3.5 h-3.5" />
-              )}
-              Доработать с ИИ
-            </button>
+            <div className="flex flex-wrap gap-2 justify-end">
+              <button
+                type="button"
+                disabled={!!aiLoading || !canRefine}
+                onClick={() => void generateBrandVoicePrompt()}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-400 hover:text-emerald-300 disabled:opacity-50"
+              >
+                {aiLoading === 'g-brandVoicePrompt' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5" />
+                )}
+                Сгенерировать с ИИ
+              </button>
+              <button
+                type="button"
+                disabled={!!aiLoading || !canRefine}
+                onClick={() =>
+                  void refineField(
+                    'brandVoicePrompt',
+                    'Сформулируй краткий гайдлайн тона: обращение, длина фраз, эмодзи по желанию.'
+                  )
+                }
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#8b5cf6] hover:text-[#a78bfa] disabled:opacity-50"
+              >
+                {aiLoading === 'brandVoicePrompt' ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Wand2 className="w-3.5 h-3.5" />
+                )}
+                Доработать с ИИ
+              </button>
+            </div>
           </div>
           <textarea
             value={state.brandVoicePrompt}
@@ -487,12 +695,25 @@ export function AIBrain() {
                     </button>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-0.5 justify-end">
+                      <button
+                        type="button"
+                        title="Сгенерировать с ИИ"
+                        disabled={!!aiLoading || !canRefine}
+                        onClick={() => void generateDiscountDesc(d.id)}
+                        className="p-2 rounded-lg hover:bg-[#1f1f22] text-emerald-400"
+                      >
+                        {aiLoading === `gd-${d.id}` ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-4 h-4" />
+                        )}
+                      </button>
                       <button
                         type="button"
                         title="Доработать с ИИ"
                         disabled={!!aiLoading || !canRefine}
-                        onClick={() => refineDiscountDesc(d.id)}
+                        onClick={() => void refineDiscountDesc(d.id)}
                         className="p-2 rounded-lg hover:bg-[#1f1f22] text-[#8b5cf6]"
                       >
                         {aiLoading === `d-${d.id}` ? (
@@ -619,11 +840,24 @@ export function AIBrain() {
                 className="w-full bg-[#0a0a0c] border border-[#1f1f22] rounded-lg px-3 py-2 text-sm text-[#d4d4d8] resize-y"
                 placeholder="Условия акции для клиента…"
               />
-              <div className="flex justify-end gap-2">
+              <div className="flex flex-wrap justify-end gap-2">
                 <button
                   type="button"
                   disabled={!!aiLoading || !canRefine}
-                  onClick={() => refinePromotionBody(p.id)}
+                  onClick={() => void generatePromotionCard(p.id)}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-emerald-400 hover:bg-emerald-500/10"
+                >
+                  {aiLoading === `gp-${p.id}` ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5" />
+                  )}
+                  Сгенерировать с ИИ
+                </button>
+                <button
+                  type="button"
+                  disabled={!!aiLoading || !canRefine}
+                  onClick={() => void refinePromotionBody(p.id)}
                   className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-[#8b5cf6] hover:bg-[#8b5cf6]/10"
                 >
                   {aiLoading === `p-${p.id}` ? (
@@ -742,9 +976,11 @@ export function AIBrain() {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-4">
-          <span className="text-sm text-white">Не писать чаще, чем</span>
-          <select
+        <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-3 sm:gap-4 min-w-0">
+          <span className="text-sm text-white shrink-0">Не писать чаще, чем</span>
+          <NativeSelect
+            variant="field"
+            className="w-full sm:w-auto sm:min-w-[200px]"
             value={state.spamCadence}
             onChange={(e) =>
               setState((s) => ({
@@ -752,12 +988,12 @@ export function AIBrain() {
                 spamCadence: e.target.value as BrainState['spamCadence'],
               }))
             }
-            className="bg-[#121214] border border-[#1f1f22] text-white text-sm rounded-lg px-4 py-2 outline-none focus:border-[#3b82f6]/50"
+            aria-label="Частота сообщений анти-спам"
           >
             <option value="week">1 раз в неделю</option>
             <option value="14d">1 раз в 14 дней</option>
             <option value="month">1 раз в месяц</option>
-          </select>
+          </NativeSelect>
         </div>
       </div>
     </div>

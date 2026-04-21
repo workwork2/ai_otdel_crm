@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   CreditCard,
   Rocket,
@@ -10,13 +10,7 @@ import {
 } from 'lucide-react';
 import { getApiBaseUrl, jsonSuperHeaders, superFetchHeaders } from '@/lib/backend-api';
 import { cn } from '@/lib/utils';
-import {
-  ONBOARDING_QUEUE,
-  type OnboardingRow,
-  type OnboardingStage,
-  readOnboardingStages,
-  writeOnboardingStages,
-} from '@/lib/superAdminData';
+import { type OnboardingRow, type OnboardingStage } from '@/lib/superAdminData';
 
 const STAGE_LABEL: Record<OnboardingStage, string> = {
   paid: 'Оплата получена',
@@ -35,60 +29,43 @@ function nextStage(s: OnboardingStage): OnboardingStage | null {
 
 export function SuperOnboarding() {
   const apiBase = getApiBaseUrl();
-  const [stages, setStages] = useState<Record<string, OnboardingStage>>({});
-  const [apiRows, setApiRows] = useState<OnboardingRow[] | null>(null);
+  const [rows, setRows] = useState<OnboardingRow[]>([]);
 
   const refresh = useCallback(async () => {
-    if (!apiBase) return;
+    if (!apiBase) {
+      setRows([]);
+      return;
+    }
     try {
       const r = await fetch(`${apiBase}/v1/super/onboarding`, { headers: superFetchHeaders() });
       if (r.ok) {
         const data = (await r.json()) as OnboardingRow[];
-        if (Array.isArray(data)) setApiRows(data);
+        setRows(Array.isArray(data) ? data : []);
+      } else {
+        setRows([]);
       }
     } catch {
-      /* ignore */
+      setRows([]);
     }
   }, [apiBase]);
 
   useEffect(() => {
-    if (apiBase) {
-      void refresh();
-      return;
-    }
-    setStages(readOnboardingStages());
-    setApiRows(null);
-  }, [apiBase, refresh]);
-
-  const rows = useMemo(() => {
-    if (apiRows) return apiRows;
-    return ONBOARDING_QUEUE.map((r) => ({
-      ...r,
-      stage: stages[r.id] ?? r.stage,
-    }));
-  }, [apiRows, stages]);
+    void refresh();
+  }, [refresh]);
 
   const advance = useCallback(
     (id: string, row: OnboardingRow) => {
       const current = row.stage;
       const n = nextStage(current);
-      if (!n) return;
-      if (apiBase) {
-        void (async () => {
-          await fetch(`${apiBase}/v1/super/onboarding/${id}/stage`, {
-            method: 'PATCH',
-            headers: jsonSuperHeaders(),
-            body: JSON.stringify({ stage: n }),
-          }).catch(() => {});
-          await refresh();
-        })();
-        return;
-      }
-      setStages((prev) => {
-        const base = { ...prev, [id]: n };
-        writeOnboardingStages(base);
-        return base;
-      });
+      if (!n || !apiBase) return;
+      void (async () => {
+        await fetch(`${apiBase}/v1/super/onboarding/${id}/stage`, {
+          method: 'PATCH',
+          headers: jsonSuperHeaders(),
+          body: JSON.stringify({ stage: n }),
+        }).catch(() => {});
+        await refresh();
+      })();
     },
     [apiBase, refresh]
   );
@@ -209,14 +186,8 @@ export function SuperOnboarding() {
       </div>
 
       <p className="text-xs text-zinc-600 max-w-3xl">
-        {apiBase ? (
-          <>Этапы синхронизируются с Nest API.</>
-        ) : (
-          <>
-            Демо: этапы в <span className="font-mono">localStorage</span> (
-            <span className="font-mono text-[10px]">super_onboarding_stages</span>).
-          </>
-        )}
+        Очередь и этапы хранятся в Nest API. Без <span className="font-mono">NEXT_PUBLIC_API_URL</span> таблица
+        пуста.
       </p>
     </div>
   );

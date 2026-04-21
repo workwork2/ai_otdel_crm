@@ -75,7 +75,7 @@ export interface CustomerProfile {
 }
 
 /** Каналы в мониторинге диалогов ИИ */
-export type QAChannel = 'whatsapp' | 'telegram' | 'sms' | 'email';
+export type QAChannel = 'whatsapp' | 'telegram' | 'sms' | 'email' | 'support';
 
 /** Статус треда в очереди контроля качества */
 export type QADialogueStatus = 'warning' | 'intercepted' | 'success' | 'active';
