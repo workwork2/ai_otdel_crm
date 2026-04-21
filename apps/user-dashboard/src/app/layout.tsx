@@ -11,9 +11,33 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: 'AI Отдел — платформа автоматизации',
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_ORIGIN ?? 'http://localhost:3000'),
+  title: {
+    default: 'AI Отдел — платформа лояльности и ИИ-касаний',
+    template: '%s · AI Отдел',
+  },
+  applicationName: 'AI Отдел',
   description:
-    'EES, клиентская база, диалоги ИИ, отчёты и интеграции для retail, услуг и B2B.',
+    'Единая экономика сценариев (EES): база клиентов, QA с ИИ, автоматизации, отчёты и интеграции для retail, услуг и B2B.',
+  keywords: [
+    'CRM',
+    'loyalty',
+    'AI маркетинг',
+    'EES',
+    'удержание клиентов',
+    'retail',
+    'B2B',
+    'WhatsApp',
+    'автоматизация',
+  ],
+  openGraph: {
+    type: 'website',
+    locale: 'ru_RU',
+    siteName: 'AI Отдел',
+    title: 'AI Отдел — платформа лояльности и ИИ-касаний',
+    description:
+      'Выручка после касаний ИИ, анти-скидки, удержание зоны риска и прозрачные тарифы — в одном продукте.',
+  },
 };
 
 export const viewport: Viewport = {

@@ -1,9 +1,12 @@
 'use client';
 
 import React, { Fragment, useMemo } from 'react';
+import Link from 'next/link';
 import { Activity, Zap, TrendingUp, PiggyBank, Shield, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAudienceData } from '@/context/AudienceDataContext';
+import { useSubscription } from '@/context/SubscriptionContext';
+import { ClientMount } from '@/components/ClientMount';
 import { computeEESMetrics, formatRub, churnPreventionTrend } from '@/lib/eesMetrics';
 import {
   Area,
@@ -17,6 +20,7 @@ import {
 
 export function Dashboard() {
   const { clients } = useAudienceData();
+  const { subscription } = useSubscription();
   const ees = useMemo(() => computeEESMetrics(clients), [clients]);
   const churnData = useMemo(() => churnPreventionTrend(), []);
   const shareReturned =
@@ -37,6 +41,16 @@ export function Dashboard() {
           <span className="text-white font-medium">{ees.clientsInBase}</span> клиентов — подходит для
           retail, услуг и B2B.
         </p>
+        {subscription?.planKey === 'trial' ? (
+          <div className="mt-4 rounded-xl border border-violet-500/25 bg-violet-500/10 px-4 py-3 text-sm text-violet-100/95 max-w-3xl">
+            <span className="font-medium text-white">Пробный тариф:</span> часть функций (QA, Excel, расширенная
+            аналитика) открывается после апгрейда. Для показа клиенту переключение — в{' '}
+            <Link href="/billing" className="text-violet-200 underline underline-offset-2">
+              Мой тариф
+            </Link>
+            .
+          </div>
+        ) : null}
       </div>
 
       {/* Главные KPI EES */}
@@ -141,45 +155,47 @@ export function Dashboard() {
               Удержание: зона риска → возврат
             </h3>
             <div className="h-[200px] min-w-0 w-full">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-                <AreaChart data={churnData} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="gRet" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
-                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f1f22" vertical={false} />
-                  <XAxis dataKey="week" stroke="#71717a" fontSize={10} tickLine={false} />
-                  <YAxis stroke="#71717a" fontSize={10} tickLine={false} />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: '#121214',
-                      border: '1px solid #1f1f22',
-                      borderRadius: '8px',
-                      fontSize: '12px',
-                      color: '#d4d4d8',
-                    }}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="returned"
-                    name="Вернулись"
-                    stroke="#f59e0b"
-                    strokeWidth={2}
-                    fillOpacity={1}
-                    fill="url(#gRet)"
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="inRisk"
-                    name="В зоне риска"
-                    stroke="#71717a"
-                    strokeWidth={1}
-                    fillOpacity={0}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
+              <ClientMount minHeight={200}>
+                <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                  <AreaChart data={churnData} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="gRet" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
+                        <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1f1f22" vertical={false} />
+                    <XAxis dataKey="week" stroke="#71717a" fontSize={10} tickLine={false} />
+                    <YAxis stroke="#71717a" fontSize={10} tickLine={false} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#121214',
+                        border: '1px solid #1f1f22',
+                        borderRadius: '8px',
+                        fontSize: '12px',
+                        color: '#d4d4d8',
+                      }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="returned"
+                      name="Вернулись"
+                      stroke="#f59e0b"
+                      strokeWidth={2}
+                      fillOpacity={1}
+                      fill="url(#gRet)"
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="inRisk"
+                      name="В зоне риска"
+                      stroke="#71717a"
+                      strokeWidth={1}
+                      fillOpacity={0}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </ClientMount>
             </div>
             <p className="text-[11px] text-[#71717a] mt-2">
               Оранжевая зона — клиенты, вернувшиеся к покупке после сценария удержания (демо-тренд).

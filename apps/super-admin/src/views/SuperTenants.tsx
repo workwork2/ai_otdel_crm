@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Building2, Eye, Snowflake, Sun, MessageCircle, MessageCircleOff } from 'lucide-react';
+import { getApiBaseUrl, jsonSuperHeaders, superFetchHeaders } from '@/lib/backend-api';
 import { cn } from '@/lib/utils';
 import {
   SUPER_TENANTS,
@@ -21,7 +22,15 @@ const STATUS_LABEL: Record<TenantStatus, string> = {
   frozen: 'Заморожен',
 };
 
-type TenantRow = SuperTenant & { chatBlocked: boolean };
+type TenantRow = SuperTenant & { chatBlocked: boolean; planKey?: string | null };
+
+const PLAN_QUICK: { key: string; label: string }[] = [
+  { key: 'trial', label: 'Trial' },
+  { key: 'starter', label: 'Starter' },
+  { key: 'business_plus', label: 'Business+' },
+  { key: 'pro', label: 'Pro' },
+  { key: 'enterprise', label: 'Enterprise' },
+];
 
 function statusBadge(status: TenantStatus) {
   const map: Record<TenantStatus, string> = {
@@ -34,42 +43,118 @@ function statusBadge(status: TenantStatus) {
 }
 
 export function SuperTenants() {
+  const apiBase = getApiBaseUrl();
   const [overrides, setOverrides] = useState<Record<string, TenantStatus>>({});
   const [chatBlocked, setChatBlocked] = useState<Record<string, boolean>>({});
+  const [apiTenants, setApiTenants] = useState<TenantRow[] | null>(null);
 
   useEffect(() => {
+    if (apiBase) {
+      void (async () => {
+        try {
+          const r = await fetch(`${apiBase}/v1/super/tenants`, { headers: superFetchHeaders() });
+          if (r.ok) {
+            const data = (await r.json()) as TenantRow[];
+            if (Array.isArray(data)) setApiTenants(data);
+          }
+        } catch {
+          setApiTenants(null);
+        }
+      })();
+      return;
+    }
     setOverrides(readTenantOverrides());
     setChatBlocked(readChatBlocks());
-  }, []);
+    setApiTenants(null);
+  }, [apiBase]);
 
   const tenants = useMemo((): TenantRow[] => {
+    if (apiTenants) return apiTenants;
     return SUPER_TENANTS.map((t) => ({
       ...t,
       status: overrides[t.id] ?? t.status,
       chatBlocked: chatBlocked[t.id] ?? false,
     }));
-  }, [overrides, chatBlocked]);
+  }, [apiTenants, overrides, chatBlocked]);
 
-  const setStatus = useCallback((id: string, status: TenantStatus) => {
-    setOverrides((prev) => {
-      const base = { ...prev };
-      const orig = SUPER_TENANTS.find((x) => x.id === id)?.status;
-      if (status === orig) delete base[id];
-      else base[id] = status;
-      writeTenantOverrides(base);
-      return base;
-    });
-  }, []);
+  const refreshApiTenants = useCallback(async () => {
+    if (!apiBase) return;
+    try {
+      const r = await fetch(`${apiBase}/v1/super/tenants`, { headers: superFetchHeaders() });
+      if (r.ok) {
+        const data = (await r.json()) as TenantRow[];
+        if (Array.isArray(data)) setApiTenants(data);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [apiBase]);
 
-  const toggleChat = useCallback((id: string, blocked: boolean) => {
-    setChatBlocked((prev) => {
-      const base = { ...prev };
-      if (!blocked) delete base[id];
-      else base[id] = true;
-      writeChatBlocks(base);
-      return { ...base };
-    });
-  }, []);
+  const patchPlan = useCallback(
+    async (id: string, planKey: string) => {
+      if (!apiBase) return;
+      try {
+        await fetch(`${apiBase}/v1/super/tenants/${id}/plan`, {
+          method: 'PATCH',
+          headers: jsonSuperHeaders(),
+          body: JSON.stringify({ planKey }),
+        });
+        await refreshApiTenants();
+      } catch {
+        /* ignore */
+      }
+    },
+    [apiBase, refreshApiTenants]
+  );
+
+  const setStatus = useCallback(
+    (id: string, status: TenantStatus) => {
+      if (apiBase) {
+        void (async () => {
+          await fetch(`${apiBase}/v1/super/tenants/${id}/status`, {
+            method: 'PATCH',
+            headers: jsonSuperHeaders(),
+            body: JSON.stringify({ status }),
+          }).catch(() => {});
+          await refreshApiTenants();
+        })();
+        return;
+      }
+      setOverrides((prev) => {
+        const base = { ...prev };
+        const orig = SUPER_TENANTS.find((x) => x.id === id)?.status;
+        if (status === orig) delete base[id];
+        else base[id] = status;
+        writeTenantOverrides(base);
+        return base;
+      });
+    },
+    [apiBase, refreshApiTenants]
+  );
+
+  const toggleChat = useCallback(
+    (id: string, blocked: boolean) => {
+      if (apiBase) {
+        void (async () => {
+          await fetch(`${apiBase}/v1/super/tenants/${id}/chat-block`, {
+            method: 'PATCH',
+            headers: jsonSuperHeaders(),
+            body: JSON.stringify({ blocked }),
+          }).catch(() => {});
+          await refreshApiTenants();
+        })();
+        return;
+      }
+      setChatBlocked((prev) => {
+        const base = { ...prev };
+        if (!blocked) delete base[id];
+        else base[id] = true;
+        writeChatBlocks(base);
+        return { ...base };
+      });
+    },
+    [apiBase, refreshApiTenants]
+  );
 
   const impersonate = (t: SuperTenant) => {
     setImpersonation({ tenantId: t.id, tenantName: t.name });
@@ -132,7 +217,24 @@ export function SuperTenants() {
                   <td className="px-4 py-3 text-zinc-400 tabular-nums">
                     {new Date(t.registeredAt).toLocaleDateString('ru-RU')}
                   </td>
-                  <td className="px-4 py-3 text-zinc-300">{t.plan}</td>
+                  <td className="px-4 py-3 text-zinc-300">
+                    {apiBase ? (
+                      <select
+                        value={t.planKey ?? 'starter'}
+                        onChange={(e) => void patchPlan(t.id, e.target.value)}
+                        className="bg-zinc-900/80 border border-zinc-700 rounded-md text-[11px] text-zinc-200 px-2 py-1.5 max-w-[9.5rem] cursor-pointer"
+                        aria-label={`Тариф ${t.name}`}
+                      >
+                        {PLAN_QUICK.map((p) => (
+                          <option key={p.key} value={p.key}>
+                            {p.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      t.plan
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-right tabular-nums text-white">
                     {t.mrrRub > 0 ? `₽ ${t.mrrRub.toLocaleString('ru-RU')}` : '—'}
                   </td>
@@ -203,8 +305,17 @@ export function SuperTenants() {
       </div>
 
       <p className="text-xs text-zinc-600 max-w-3xl">
-        Демо: статусы и блокировки чата в <span className="font-mono text-[11px]">localStorage</span>.
-        Impersonation — <span className="font-mono text-[11px]">sessionStorage</span> в панели клиента.
+        {apiBase ? (
+          <>
+            Данные tenants с API <span className="font-mono text-[11px]">{apiBase}</span>. Impersonation —{' '}
+            <span className="font-mono text-[11px]">sessionStorage</span> в панели клиента.
+          </>
+        ) : (
+          <>
+            Демо без API: статусы и блокировки в <span className="font-mono text-[11px]">localStorage</span>.
+            Impersonation — <span className="font-mono text-[11px]">sessionStorage</span>.
+          </>
+        )}
       </p>
     </div>
   );

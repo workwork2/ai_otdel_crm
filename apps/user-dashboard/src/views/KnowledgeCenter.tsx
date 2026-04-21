@@ -13,6 +13,7 @@ import {
   Lock,
   Headphones,
   Waypoints,
+  CreditCard,
 } from 'lucide-react';
 
 export function KnowledgeCenter() {
@@ -136,6 +137,64 @@ export function KnowledgeCenter() {
         </dl>
       </section>
 
+      <section className="crm-card p-6 md:p-8 space-y-5">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-[#eab308]/10 flex items-center justify-center">
+            <CreditCard className="w-5 h-5 text-[#eab308]" />
+          </div>
+          <div>
+            <h2 className="text-lg font-medium text-white">Виды подписки и тарифы</h2>
+            <p className="text-xs text-[#71717a] mt-0.5">
+              Единая линейка для сайта и биллинга; детали также отдаются API{' '}
+              <span className="font-mono text-[10px]">GET /v1/docs/subscriptions</span>.
+            </p>
+          </div>
+        </div>
+        <div className="space-y-4 text-sm text-[#d4d4d8] leading-relaxed">
+          <div className="rounded-lg border border-[#27272a] bg-[#121214]/80 p-4">
+            <h3 className="text-white font-medium">Trial</h3>
+            <p className="text-[#a1a1aa] mt-1">
+              Бесплатный пробный период (~14 дней): ограниченные сообщения и размер базы, базовые сценарии и
+              импорт. Подходит для оценки качества диалогов без обязательств.
+            </p>
+          </div>
+          <div className="rounded-lg border border-[#27272a] bg-[#121214]/80 p-4">
+            <h3 className="text-white font-medium">Starter</h3>
+            <p className="text-[#a1a1aa] mt-1">
+              Старт для малого бизнеса: предсказуемый месячный платёж, ключевые каналы (WhatsApp, Telegram,
+              SMS, email), интеграции уровня RetailCRM / Excel, очередь касаний EES.
+            </p>
+          </div>
+          <div className="rounded-lg border border-[#27272a] bg-[#121214]/80 p-4">
+            <h3 className="text-white font-medium">Pro</h3>
+            <p className="text-[#a1a1aa] mt-1">
+              Рост и несколько воронок: выше лимиты сообщений и контактов, канал MAX (VK), расширенный
+              контроль качества диалогов и приоритет в поддержке.
+            </p>
+          </div>
+          <div className="rounded-lg border border-[#27272a] bg-[#121214]/80 p-4">
+            <h3 className="text-white font-medium">Business Plus («Бизнес Плюс»)</h3>
+            <p className="text-[#a1a1aa] mt-1">
+              Пакет как на экране «Мой тариф» в демо: удобные лимиты для одного юрлица, персональный инженер
+              внедрения, быстрый апгрейд до Pro.
+            </p>
+          </div>
+          <div className="rounded-lg border border-[#27272a] bg-[#121214]/80 p-4">
+            <h3 className="text-white font-medium">Enterprise</h3>
+            <p className="text-[#a1a1aa] mt-1">
+              Индивидуальный договор: SSO, выделенные очереди, кастомные лимиты, опционально on-premise или
+              выделенный контур данных. Цена и SLA по согласованию.
+            </p>
+          </div>
+        </div>
+        <Link
+          href="/billing"
+          className="inline-flex text-sm font-semibold text-[#3b82f6] hover:text-[#60a5fa]"
+        >
+          Перейти к «Мой тариф» →
+        </Link>
+      </section>
+
       <section className="crm-card p-6 md:p-8 space-y-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-[#6366f1]/10 flex items-center justify-center">
@@ -244,8 +303,8 @@ export function KnowledgeCenter() {
             экрана; в проде уйдут в API канала.
           </li>
           <li>
-            Треды хранятся в браузере (localStorage) до очистки; на бэкенде будет синхронизация с WhatsApp,
-            Telegram, MAX и др.
+            При подключённом Nest API диалоги и настройки синхронизируются с сервером; иначе треды в
+            localStorage до очистки.
           </li>
         </ul>
         <Link
@@ -264,8 +323,8 @@ export function KnowledgeCenter() {
           <h2 className="text-lg font-medium text-white">Безопасность и данные</h2>
         </div>
         <p className="text-sm text-[#d4d4d8] leading-relaxed">
-          Импорт и настройки хранятся локально в браузере (демо). В продакшене подключается ваш backend,
-          шифрование каналов и разграничение ролей менеджеров.
+          Задайте <span className="font-mono text-[11px]">NEXT_PUBLIC_API_URL</span> — клиенты, QA, мозг ИИ и
+          чат поддержки пишутся в Nest backend с файлом состояния. Без API данные остаются в браузере (демо).
         </p>
       </section>
 

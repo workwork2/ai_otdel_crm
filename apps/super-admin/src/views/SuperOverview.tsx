@@ -1,8 +1,9 @@
 'use client';
 
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { TrendingUp, MessageSquare, DollarSign, Sparkles, PieChart, ArrowUpRight } from 'lucide-react';
+import { getApiBaseUrl, superFetchHeaders } from '@/lib/backend-api';
 import { SUPER_GLOBAL_METRICS } from '@/lib/superAdminData';
 import { cn } from '@/lib/utils';
 
@@ -16,8 +17,31 @@ function fmtUsd(n: number) {
   return `$ ${n.toLocaleString('en-US')}`;
 }
 
+type Metrics = typeof SUPER_GLOBAL_METRICS;
+
 export function SuperOverview() {
-  const m = SUPER_GLOBAL_METRICS;
+  const apiBase = getApiBaseUrl();
+  const [m, setM] = useState<Metrics>(SUPER_GLOBAL_METRICS);
+
+  const load = useCallback(async () => {
+    if (!apiBase) {
+      setM(SUPER_GLOBAL_METRICS);
+      return;
+    }
+    try {
+      const r = await fetch(`${apiBase}/v1/super/metrics`, { headers: superFetchHeaders() });
+      if (r.ok) {
+        const data = (await r.json()) as Metrics;
+        if (data && typeof data === 'object') setM({ ...SUPER_GLOBAL_METRICS, ...data });
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [apiBase]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   return (
     <div className="sa-page flex-1 min-h-0 overflow-y-auto w-full max-w-6xl mx-auto px-4 sm:px-8 lg:px-10 py-8 space-y-8">

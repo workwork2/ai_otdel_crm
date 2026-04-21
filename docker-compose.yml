@@ -1,0 +1,73 @@
+# AI Отдел — полный стек: Nest API + панель клиента + супер-админка
+# Сборка из корня монорепозитория.
+#
+# Перед запуском скопируйте .env.docker.example → .env (в корне) или задайте переменные в shell.
+#
+#   docker compose up --build
+#
+# URL: http://localhost:3000 — клиенты · http://localhost:3001 — супер-админ · http://localhost:3333 — API
+
+name: linearize-ai
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    ports:
+      - "${API_PORT:-3333}:3333"
+    environment:
+      PORT: "3333"
+      SUPER_ADMIN_KEY: ${SUPER_ADMIN_KEY:-change-me-super-secret}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:3001}
+      DATA_PATH: data/state.json
+    volumes:
+      - api_state:/app/apps/api/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3333/v1/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  user-dashboard:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.user-dashboard
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3333}
+        NEXT_PUBLIC_DEMO_TENANT_ID: ${NEXT_PUBLIC_DEMO_TENANT_ID:-t_demo}
+        NEXT_PUBLIC_SUPER_APP_URL: ${NEXT_PUBLIC_SUPER_APP_URL:-http://localhost:3001}
+        NEXT_PUBLIC_SUPPORT_EMAIL: ${NEXT_PUBLIC_SUPPORT_EMAIL:-hello@example.com}
+    ports:
+      - "${USER_DASH_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      PORT: "3000"
+
+  super-admin:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.super-admin
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3333}
+        NEXT_PUBLIC_USER_APP_URL: ${NEXT_PUBLIC_USER_APP_URL:-http://localhost:3000}
+        NEXT_PUBLIC_SUPER_ADMIN_KEY: ${NEXT_PUBLIC_SUPER_ADMIN_KEY:-change-me-super-secret}
+    ports:
+      - "${SUPER_ADMIN_PORT:-3001}:3001"
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      PORT: "3001"
+
+volumes:
+  api_state:

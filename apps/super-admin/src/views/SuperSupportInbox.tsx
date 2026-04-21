@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Headphones, Send, CheckCircle, Circle } from 'lucide-react';
+import { getApiBaseUrl, jsonSuperHeaders, superFetchHeaders } from '@/lib/backend-api';
 import { cn } from '@/lib/utils';
 import {
   SUPPORT_TICKETS_SEED,
@@ -38,15 +39,37 @@ const PRIORITY: Record<SupportTicket['priority'], string> = {
 };
 
 export function SuperSupportInbox() {
+  const apiBase = getApiBaseUrl();
   const [tickets, setTickets] = useState<SupportTicket[]>(SUPPORT_TICKETS_SEED);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
 
+  const refreshTickets = useCallback(async () => {
+    if (!apiBase) return;
+    try {
+      const r = await fetch(`${apiBase}/v1/super/support-tickets`, { headers: superFetchHeaders() });
+      if (r.ok) {
+        const data = (await r.json()) as SupportTicket[];
+        if (Array.isArray(data)) setTickets(data);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [apiBase]);
+
   useEffect(() => {
+    if (apiBase) {
+      void refreshTickets();
+      return;
+    }
     const t = loadTickets();
     setTickets(t);
     setSelectedId((id) => id ?? t[0]?.id ?? null);
-  }, []);
+  }, [apiBase, refreshTickets]);
+
+  useEffect(() => {
+    if (tickets.length) setSelectedId((id) => id ?? tickets[0]?.id ?? null);
+  }, [tickets]);
 
   const selected = useMemo(
     () => tickets.find((x) => x.id === selectedId) ?? null,
@@ -56,6 +79,18 @@ export function SuperSupportInbox() {
   const sendReply = useCallback(() => {
     const text = draft.trim();
     if (!text || !selectedId) return;
+    if (apiBase) {
+      void (async () => {
+        await fetch(`${apiBase}/v1/super/support-tickets/${selectedId}/messages`, {
+          method: 'POST',
+          headers: jsonSuperHeaders(),
+          body: JSON.stringify({ from: 'admin', text }),
+        }).catch(() => {});
+        await refreshTickets();
+      })();
+      setDraft('');
+      return;
+    }
     setTickets((prev) => {
       const next = prev.map((t) => {
         if (t.id !== selectedId) return t;
@@ -76,10 +111,21 @@ export function SuperSupportInbox() {
       return next;
     });
     setDraft('');
-  }, [draft, selectedId]);
+  }, [draft, selectedId, apiBase, refreshTickets]);
 
   const markResolved = useCallback(() => {
     if (!selectedId) return;
+    if (apiBase) {
+      void (async () => {
+        await fetch(`${apiBase}/v1/super/support-tickets/${selectedId}`, {
+          method: 'PATCH',
+          headers: jsonSuperHeaders(),
+          body: JSON.stringify({ status: 'resolved' }),
+        }).catch(() => {});
+        await refreshTickets();
+      })();
+      return;
+    }
     setTickets((prev) => {
       const next = prev.map((t) =>
         t.id === selectedId
@@ -89,7 +135,7 @@ export function SuperSupportInbox() {
       saveTickets(next);
       return next;
     });
-  }, [selectedId]);
+  }, [selectedId, apiBase, refreshTickets]);
 
   return (
     <div className="sa-page flex-1 min-h-0 flex flex-col w-full max-w-6xl mx-auto px-4 sm:px-8 lg:px-10 py-8 min-h-0">
@@ -103,8 +149,9 @@ export function SuperSupportInbox() {
           Чаты и обращения
         </h1>
         <p className="text-zinc-400 mt-2 text-[15px] max-w-2xl leading-relaxed">
-          Отвечайте клиентам из панели: ответы сохраняются локально (демо). В проде — общая очередь с
-          панелью клиента и email.
+          Отвечайте клиентам из панели. При{' '}
+          <span className="font-mono text-[12px] text-zinc-500">NEXT_PUBLIC_API_URL</span> очередь
+          синхронизируется с Nest API; иначе — локально в браузере.
         </p>
       </div>
 

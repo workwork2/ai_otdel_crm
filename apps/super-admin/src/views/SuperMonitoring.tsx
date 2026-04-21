@@ -1,10 +1,40 @@
 'use client';
 
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, Radio, Plug } from 'lucide-react';
+import { getApiBaseUrl, superFetchHeaders } from '@/lib/backend-api';
 import { INTEGRATION_ERRORS, QUEUE_STATS } from '@/lib/superAdminData';
 
+type QueueRow = (typeof QUEUE_STATS)[number];
+type ErrRow = (typeof INTEGRATION_ERRORS)[number];
+
 export function SuperMonitoring() {
+  const apiBase = getApiBaseUrl();
+  const [queues, setQueues] = useState<QueueRow[]>(QUEUE_STATS);
+  const [errors, setErrors] = useState<ErrRow[]>(INTEGRATION_ERRORS);
+
+  const load = useCallback(async () => {
+    if (!apiBase) {
+      setQueues(QUEUE_STATS);
+      setErrors(INTEGRATION_ERRORS);
+      return;
+    }
+    try {
+      const r = await fetch(`${apiBase}/v1/super/monitoring`, { headers: superFetchHeaders() });
+      if (r.ok) {
+        const data = (await r.json()) as { queueStats?: QueueRow[]; integrationErrors?: ErrRow[] };
+        if (Array.isArray(data.queueStats)) setQueues(data.queueStats);
+        if (Array.isArray(data.integrationErrors)) setErrors(data.integrationErrors);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [apiBase]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
   return (
     <div className="sa-page flex-1 min-h-0 overflow-y-auto w-full max-w-6xl mx-auto px-4 sm:px-8 lg:px-10 py-8 space-y-8">
       <div className="sa-glow-line max-w-md opacity-80" />
@@ -27,7 +57,7 @@ export function SuperMonitoring() {
           <h2 className="text-lg font-medium text-white">Очереди рассылки</h2>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {QUEUE_STATS.map((q) => (
+          {queues.map((q) => (
             <div
               key={q.channel}
               className="sa-card p-5 border border-emerald-500/15 bg-emerald-950/10"
@@ -74,7 +104,7 @@ export function SuperMonitoring() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#1f1f22]">
-              {INTEGRATION_ERRORS.map((row) => (
+              {errors.map((row) => (
                 <tr key={row.id} className="hover:bg-[#121214]/50">
                   <td className="px-4 py-3 text-[#a1a1aa] tabular-nums whitespace-nowrap">
                     {new Date(row.at).toLocaleString('ru-RU')}

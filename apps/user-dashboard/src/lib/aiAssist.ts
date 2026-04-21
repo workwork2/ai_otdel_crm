@@ -1,8 +1,10 @@
 /**
- * Опциональная доработка текста через Gemini (Google AI).
- * В .env: NEXT_PUBLIC_GEMINI_API_KEY=... — иначе локальная заглушка для демо.
+ * Доработка текста: при NEXT_PUBLIC_API_URL — через Nest API (Anthropic → OpenAI → Gemini).
+ * Иначе — прямой вызов Gemini, как раньше.
  */
-function getKey(): string | undefined {
+import { getApiBaseUrl, getTenantIdClient, jsonTenantHeaders } from '@/lib/backend-api';
+
+function getGeminiKey(): string | undefined {
   if (typeof process !== 'undefined' && process.env) {
     return process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
   }
@@ -15,7 +17,7 @@ function localPolish(text: string): string {
   const lines = t.split(/\n/).map((l) => l.trim()).filter(Boolean);
   return (
     lines.join('\n') +
-    '\n\n—\n[Демо: добавьте NEXT_PUBLIC_GEMINI_API_KEY в .env для доработки формулировок через Gemini.]'
+    '\n\n—\n[Демо: включите API (NEXT_PUBLIC_API_URL) с ANTHROPIC_API_KEY на сервере или задайте NEXT_PUBLIC_GEMINI_API_KEY для прямого Gemini.]'
   );
 }
 
@@ -23,7 +25,34 @@ export async function refineMarketingCopy(
   instruction: string,
   draft: string
 ): Promise<{ text: string; usedApi: boolean; error?: string }> {
-  const key = getKey();
+  const base = typeof window !== 'undefined' ? getApiBaseUrl() : null;
+  const tid = typeof window !== 'undefined' ? getTenantIdClient() : 't_demo';
+
+  if (base) {
+    try {
+      const res = await fetch(`${base}/v1/tenant/${tid}/ai/refine`, {
+        method: 'POST',
+        headers: jsonTenantHeaders(),
+        body: JSON.stringify({ instruction: instruction.trim(), draft: draft.trim() }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { text?: string; provider?: string; error?: string };
+        const text = String(data.text ?? '').trim();
+        if (text) {
+          return {
+            text,
+            usedApi: data.provider !== 'stub',
+            error: data.error,
+          };
+        }
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('API refine failed, fallback:', msg);
+    }
+  }
+
+  const key = getGeminiKey();
   const prompt = `${instruction.trim()}\n\nИсходный текст:\n---\n${draft}\n---\nВерни только итоговый текст без пояснений.`;
 
   if (!key) {

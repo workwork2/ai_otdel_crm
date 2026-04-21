@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   Area,
   AreaChart,
@@ -26,6 +27,8 @@ import {
 import { cn } from '@/lib/utils';
 import { useAudienceData } from '@/context/AudienceDataContext';
 import { computeEESMetrics, formatRub, churnPreventionTrend } from '@/lib/eesMetrics';
+import { useSubscription } from '@/context/SubscriptionContext';
+import { ClientMount } from '@/components/ClientMount';
 
 const funnelData = [
   { name: 'Сигналы из CRM/Кассы', value: 14500 },
@@ -56,6 +59,8 @@ const PERIOD_OPTIONS: { id: ReportPeriod; label: string }[] = [
 export function Analytics() {
   const [period, setPeriod] = useState<ReportPeriod>('apr2026');
   const { clients } = useAudienceData();
+  const { has, subscription } = useSubscription();
+  const advanced = !subscription || has('analyticsAdvanced');
   const ees = useMemo(() => computeEESMetrics(clients), [clients]);
 
   const periodFactor = useMemo(() => {
@@ -130,6 +135,14 @@ export function Analytics() {
             Главная цифра месяца — сгенерированная выручка после касаний ИИ; рядом — экономия на скидках и
             удержание «зоны риска».
           </p>
+          {!advanced && subscription ? (
+            <p className="mt-3 text-sm text-amber-200/90 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 max-w-2xl">
+              Расширенные графики и воронка доступны с тарифа Business Plus. Сводные KPI ниже — всегда.{' '}
+              <Link href="/billing" className="text-amber-200 underline underline-offset-2">
+                Повысить тариф
+              </Link>
+            </p>
+          ) : null}
         </div>
         <label className="flex items-center gap-2 border border-[#1f1f22] bg-[#121214] text-[#d4d4d8] px-3 sm:px-4 py-2 rounded-lg text-sm hover:bg-[#1f1f22] transition-colors cursor-pointer shrink-0">
           <Filter className="w-4 h-4 shrink-0" />
@@ -172,12 +185,14 @@ export function Analytics() {
         />
       </div>
 
+      {advanced ? (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="crm-panel p-6">
           <h3 className="text-[15px] font-medium text-white mb-6 flex items-center gap-2">
             <TrendingUp className="w-4 h-4 text-[#10b981]" /> Динамика: выручка после ИИ vs органика
           </h3>
           <div className="h-[280px] min-w-0 w-full">
+            <ClientMount minHeight={280}>
             <ResponsiveContainer width="100%" height="100%" minWidth={0}>
               <AreaChart data={revenueFiltered} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                 <defs>
@@ -229,6 +244,7 @@ export function Analytics() {
                 />
               </AreaChart>
             </ResponsiveContainer>
+            </ClientMount>
           </div>
         </div>
 
@@ -241,6 +257,7 @@ export function Analytics() {
             неделям).
           </p>
           <div className="h-[280px] min-w-0 w-full">
+            <ClientMount minHeight={280}>
             <ResponsiveContainer width="100%" height="100%" minWidth={0}>
               <BarChart data={churnWeeks} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1f1f22" vertical={false} />
@@ -260,15 +277,27 @@ export function Analytics() {
                 <Bar dataKey="inRisk" name="В зоне риска (охват)" fill="#3f3f46" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
+            </ClientMount>
           </div>
         </div>
       </div>
+      ) : (
+        <div className="crm-panel p-6 border border-dashed border-zinc-600">
+          <p className="text-sm text-[#a1a1aa] leading-relaxed">
+            Детальная динамика выручки, удержание по неделям и воронка ИИ включены в тарифе{' '}
+            <span className="text-zinc-300">Business Plus</span> и выше. Сводные показатели вверху страницы
+            доступны всегда.
+          </p>
+        </div>
+      )}
 
+      {advanced ? (
       <div className="crm-panel p-6">
         <h3 className="text-[15px] font-medium text-white mb-6 flex items-center gap-2">
           <Target className="w-4 h-4 text-[#8b5cf6]" /> Воронка продаж через ИИ
         </h3>
         <div className="h-[300px] min-w-0 w-full">
+          <ClientMount minHeight={300}>
           <ResponsiveContainer width="100%" height="100%" minWidth={0}>
             <BarChart layout="vertical" data={funnelData} margin={{ top: 0, right: 0, left: 30, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1f1f22" horizontal={false} />
@@ -299,8 +328,10 @@ export function Analytics() {
               </Bar>
             </BarChart>
           </ResponsiveContainer>
+          </ClientMount>
         </div>
       </div>
+      ) : null}
     </div>
   );
 }

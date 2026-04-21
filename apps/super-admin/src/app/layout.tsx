@@ -12,9 +12,20 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: 'Super Admin — AI Отдел',
-  description: 'Control plane: MRR, tenants, AI, мониторинг.',
+  title: {
+    default: 'Control Plane — AI Отдел',
+    template: '%s · Super Admin',
+  },
+  applicationName: 'AI Отдел · Super Admin',
+  description:
+    'Единая панель управления: арендаторы, тарифы, MRR, ИИ-хаб, мониторинг очередей и поддержка.',
   robots: { index: false, follow: false },
+  openGraph: {
+    title: 'AI Отдел — Super Admin',
+    description: 'Внутренняя консоль для команды продукта.',
+    type: 'website',
+    locale: 'ru_RU',
+  },
 };
 
 export const viewport: Viewport = {

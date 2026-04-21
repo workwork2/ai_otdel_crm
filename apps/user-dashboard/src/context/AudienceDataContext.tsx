@@ -4,12 +4,17 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import type { CustomerProfile } from '@/types';
 import { mockUniversalAudience } from '@/data';
+import { apiFetchJson } from '@/lib/api-client';
+import { getApiBaseUrl, getTenantIdClient, jsonTenantHeaders, tenantFetchHeaders } from '@/lib/backend-api';
 import { enrichCustomer } from '@/lib/scoring';
 import { parseExcelCustomers, buildExcelTemplate } from '@/lib/excelImport';
+import { useSubscription } from '@/context/SubscriptionContext';
+import { pushToast } from '@/lib/toast';
 
 const STORAGE_KEY = 'aura-audience-db-v2';
 
@@ -43,17 +48,85 @@ type AudienceDataContextValue = {
 const AudienceDataContext = createContext<AudienceDataContextValue | null>(null);
 
 export function AudienceDataProvider({ children }: { children: React.ReactNode }) {
-  const [clients, setClients] = useState<CustomerProfile[]>(() => loadInitial());
-  const [importError, setImportError] = useState<string | null>(null);
-  const [lastImportInfo, setLastImportInfo] = useState<string | null>(null);
+  const apiBase = getApiBaseUrl();
+  const { has } = useSubscription();
+  const [tenantId, setTenantId] = useState(() => getTenantIdClient());
+  const skipNextRemotePersist = useRef(true);
 
   useEffect(() => {
+    const sync = () => setTenantId(getTenantIdClient());
+    sync();
+    window.addEventListener('focus', sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener('focus', sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
+
+  const [clients, setClients] = useState<CustomerProfile[]>(() => {
+    if (typeof window !== 'undefined' && getApiBaseUrl()) return [];
+    return loadInitial();
+  });
+  const [importError, setImportError] = useState<string | null>(null);
+  const [lastImportInfo, setLastImportInfo] = useState<string | null>(null);
+  const [hydratedFromApi, setHydratedFromApi] = useState(() => !getApiBaseUrl());
+
+  useEffect(() => {
+    if (!apiBase) {
+      setHydratedFromApi(true);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const res = await apiFetchJson<CustomerProfile[]>(
+        `${apiBase}/v1/tenant/${tenantId}/customers`,
+        { headers: tenantFetchHeaders(), retries: 2, silent: true }
+      );
+      if (cancelled) return;
+      if (res.ok && Array.isArray(res.data)) {
+        skipNextRemotePersist.current = true;
+        setClients(
+          res.data.length > 0
+            ? res.data.map((c) => enrichCustomer(c))
+            : mockUniversalAudience.map((c) => enrichCustomer(c))
+        );
+      } else {
+        skipNextRemotePersist.current = true;
+        setClients(loadInitial());
+      }
+      if (!cancelled) setHydratedFromApi(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, tenantId]);
+
+  useEffect(() => {
+    if (!hydratedFromApi) return;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(clients));
     } catch {
       /* quota */
     }
-  }, [clients]);
+  }, [clients, hydratedFromApi]);
+
+  useEffect(() => {
+    if (!apiBase || !hydratedFromApi) return;
+    if (skipNextRemotePersist.current) {
+      skipNextRemotePersist.current = false;
+      return;
+    }
+    const t = setTimeout(() => {
+      void apiFetchJson(`${apiBase}/v1/tenant/${tenantId}/customers`, {
+        method: 'PUT',
+        headers: jsonTenantHeaders(),
+        body: JSON.stringify(clients),
+        retries: 1,
+      });
+    }, 700);
+    return () => clearTimeout(t);
+  }, [clients, apiBase, tenantId, hydratedFromApi]);
 
   const replaceAll = useCallback((next: CustomerProfile[]) => {
     setClients(next.map((c) => enrichCustomer(c)));
@@ -76,10 +149,21 @@ export function AudienceDataProvider({ children }: { children: React.ReactNode }
 
   const resetToDemo = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
-    setClients(mockUniversalAudience.map((c) => enrichCustomer(c)));
+    const next = mockUniversalAudience.map((c) => enrichCustomer(c));
+    skipNextRemotePersist.current = true;
+    setClients(next);
     setLastImportInfo(null);
     setImportError(null);
-  }, []);
+    const base = getApiBaseUrl();
+    if (base) {
+      void apiFetchJson(`${base}/v1/tenant/${tenantId}/customers`, {
+        method: 'PUT',
+        headers: jsonTenantHeaders(),
+        body: JSON.stringify(next),
+        retries: 1,
+      });
+    }
+  }, [tenantId]);
 
   const downloadTemplate = useCallback(() => {
     buildExcelTemplate();
@@ -99,12 +183,41 @@ export function AudienceDataProvider({ children }: { children: React.ReactNode }
         setImportError('В файле нет строк с данными. Проверьте первый лист.');
         return;
       }
+
+      if (apiBase) {
+        if (!has('excelImport')) {
+          const msg =
+            'Импорт Excel недоступен на текущем тарифе. Откройте «Мой тариф» и выберите Starter или выше.';
+          setImportError(msg);
+          pushToast(msg, 'error');
+          return;
+        }
+        const res = await apiFetchJson<CustomerProfile[]>(
+          `${apiBase}/v1/tenant/${tenantId}/customers/merge`,
+          {
+            method: 'POST',
+            headers: jsonTenantHeaders(),
+            body: JSON.stringify({ customers: imported }),
+            retries: 1,
+          }
+        );
+        if (!res.ok) {
+          setImportError(res.error);
+          return;
+        }
+        skipNextRemotePersist.current = true;
+        setClients(res.data.map((c) => enrichCustomer(c)));
+        setLastImportInfo(`Добавлено из «${file.name}» (сервер объединил базу)`);
+        pushToast(`Импорт: +${imported.length} контактов`, 'success');
+        return;
+      }
+
       mergeImported(imported);
       setLastImportInfo(`Добавлено ${imported.length} контактов из «${file.name}»`);
     } catch (e) {
       setImportError(e instanceof Error ? e.message : 'Не удалось прочитать файл');
     }
-  }, [mergeImported]);
+  }, [apiBase, tenantId, has, mergeImported]);
 
   const value = useMemo(
     () => ({

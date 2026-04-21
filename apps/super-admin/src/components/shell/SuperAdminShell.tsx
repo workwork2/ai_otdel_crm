@@ -72,10 +72,10 @@ export function SuperAdminShell({ children }: { children: React.ReactNode }) {
             </div>
             <div className="min-w-0">
               <span className="text-[13px] sm:text-sm font-bold text-white tracking-tight block truncate">
-                Control Plane
+                AI Отдел
               </span>
               <span className="text-[10px] text-amber-600/90 uppercase tracking-[0.2em] font-semibold">
-                Super Admin
+                Control Plane · Super Admin
               </span>
             </div>
           </div>

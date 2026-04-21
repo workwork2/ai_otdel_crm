@@ -3,14 +3,20 @@
   "private": true,
   "workspaces": [
     "apps/user-dashboard",
-    "apps/super-admin"
+    "apps/super-admin",
+    "apps/api"
   ],
   "scripts": {
     "dev": "npm run dev -w user-dashboard",
     "start": "npm run start -w user-dashboard",
     "dev:user": "npm run dev -w user-dashboard",
     "dev:admin": "npm run dev -w super-admin",
+    "dev:api": "npm run start:dev -w api",
     "build": "npm run build --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present"
+    "lint": "npm run lint --workspaces --if-present",
+    "docker:build": "docker compose build",
+    "docker:up": "docker compose up --build",
+    "docker:up:detached": "docker compose up --build -d",
+    "docker:down": "docker compose down"
   }
 }

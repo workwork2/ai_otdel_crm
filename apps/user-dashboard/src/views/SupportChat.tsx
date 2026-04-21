@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Headphones, ImagePlus, Send, Trash2 } from 'lucide-react';
+import { getApiBaseUrl, getTenantIdClient, jsonTenantHeaders, tenantFetchHeaders } from '@/lib/backend-api';
 import { cn } from '@/lib/utils';
 import { isSupportChatBlocked } from '@/lib/platformSync';
 
@@ -19,7 +20,7 @@ export type SupportMessage = {
 const WELCOME: SupportMessage = {
   id: 'welcome',
   role: 'system',
-  text: 'Здравствуйте! Опишите проблему или прикрепите скриншоты — обращение сохраняется в этом браузере (демо). В продакшене сообщения уйдут администратору CRM.',
+  text: 'Здравствуйте! Опишите проблему или прикрепите скриншоты — при включённом API сообщения сохраняются на сервере; иначе только в этом браузере.',
   images: [],
   ts: Date.now(),
 };
@@ -47,7 +48,11 @@ function saveMessages(msgs: SupportMessage[]) {
 }
 
 export function SupportChat() {
-  const [messages, setMessages] = useState<SupportMessage[]>([WELCOME]);
+  const apiBase = getApiBaseUrl();
+  const [tenantId, setTenantId] = useState(() => getTenantIdClient());
+  const [messages, setMessages] = useState<SupportMessage[]>(() =>
+    getApiBaseUrl() ? [WELCOME] : loadMessages()
+  );
   const [draft, setDraft] = useState('');
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [chatBlocked, setChatBlocked] = useState(false);
@@ -55,19 +60,71 @@ export function SupportChat() {
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setMessages(loadMessages());
+    const syncTid = () => setTenantId(getTenantIdClient());
+    syncTid();
+    window.addEventListener('focus', syncTid);
+    window.addEventListener('storage', syncTid);
+    return () => {
+      window.removeEventListener('focus', syncTid);
+      window.removeEventListener('storage', syncTid);
+    };
   }, []);
 
   useEffect(() => {
-    const sync = () => setChatBlocked(isSupportChatBlocked());
-    sync();
-    window.addEventListener('storage', sync);
-    window.addEventListener('focus', sync);
+    if (!apiBase) {
+      setMessages(loadMessages());
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`${apiBase}/v1/tenant/${tenantId}/support-chat`, {
+          headers: tenantFetchHeaders(),
+        });
+        if (cancelled) return;
+        if (r.ok) {
+          const data = (await r.json()) as SupportMessage[];
+          if (Array.isArray(data) && data.length > 0) setMessages(data);
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
     return () => {
-      window.removeEventListener('storage', sync);
-      window.removeEventListener('focus', sync);
+      cancelled = true;
     };
-  }, []);
+  }, [apiBase, tenantId]);
+
+  useEffect(() => {
+    const syncBlock = () => {
+      if (getApiBaseUrl()) {
+        void (async () => {
+          try {
+            const r = await fetch(`${getApiBaseUrl()}/v1/tenant/${getTenantIdClient()}/workspace-meta`, {
+              headers: tenantFetchHeaders(),
+            });
+            if (r.ok) {
+              const j = (await r.json()) as { supportChatBlocked?: boolean };
+              setChatBlocked(!!j.supportChatBlocked);
+              return;
+            }
+          } catch {
+            /* ignore */
+          }
+          setChatBlocked(isSupportChatBlocked());
+        })();
+      } else {
+        setChatBlocked(isSupportChatBlocked());
+      }
+    };
+    syncBlock();
+    window.addEventListener('storage', syncBlock);
+    window.addEventListener('focus', syncBlock);
+    return () => {
+      window.removeEventListener('storage', syncBlock);
+      window.removeEventListener('focus', syncBlock);
+    };
+  }, [tenantId]);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
@@ -76,7 +133,7 @@ export function SupportChat() {
   const appendMessage = useCallback((msg: SupportMessage) => {
     setMessages((prev) => {
       const next = [...prev, msg];
-      saveMessages(next);
+      if (!getApiBaseUrl()) saveMessages(next);
       return next;
     });
   }, []);
@@ -114,15 +171,52 @@ export function SupportChat() {
       images: [...pendingImages],
       ts: Date.now(),
     };
-    appendMessage(msg);
     setDraft('');
     setPendingImages([]);
 
+    const base = getApiBaseUrl();
+    if (base) {
+      setMessages((prev) => [...prev, msg]);
+      void (async () => {
+        const pushSystem = async (text: string) => {
+          const sm: SupportMessage = {
+            id: crypto.randomUUID(),
+            role: 'system',
+            text,
+            images: [],
+            ts: Date.now(),
+          };
+          setMessages((prev) => [...prev, sm]);
+          await fetch(`${base}/v1/tenant/${tenantId}/support-chat`, {
+            method: 'POST',
+            headers: jsonTenantHeaders(),
+            body: JSON.stringify({ role: 'system', text: sm.text, images: [] }),
+          }).catch(() => {});
+        };
+        try {
+          await fetch(`${base}/v1/tenant/${tenantId}/support-chat`, {
+            method: 'POST',
+            headers: jsonTenantHeaders(),
+            body: JSON.stringify({
+              role: 'user',
+              text: msg.text,
+              images: msg.images,
+            }),
+          });
+          await pushSystem('Сообщение получено и передано в очередь поддержки платформы.');
+        } catch {
+          await pushSystem('Не удалось отправить сообщение на сервер. Проверьте API.');
+        }
+      })();
+      return;
+    }
+
+    appendMessage(msg);
     window.setTimeout(() => {
       appendMessage({
         id: crypto.randomUUID(),
         role: 'system',
-        text: 'Сообщение получено. Администратор CRM ответит, когда подключится бэкенд; в демо история хранится только у вас в браузере.',
+        text: 'Сообщение получено. Включите NEXT_PUBLIC_API_URL для сохранения на сервере.',
         images: [],
         ts: Date.now(),
       });
@@ -130,7 +224,25 @@ export function SupportChat() {
   };
 
   const clearHistory = () => {
-    if (!confirm('Очистить историю чата в этом браузере?')) return;
+    if (!confirm('Очистить историю чата?')) return;
+    const base = getApiBaseUrl();
+    if (base) {
+      void (async () => {
+        try {
+          const r = await fetch(`${base}/v1/tenant/${tenantId}/support-chat`, {
+            method: 'DELETE',
+            headers: tenantFetchHeaders(),
+          });
+          if (r.ok) {
+            const data = (await r.json()) as SupportMessage[];
+            if (Array.isArray(data)) setMessages(data);
+          }
+        } catch {
+          /* ignore */
+        }
+      })();
+      return;
+    }
     localStorage.removeItem(STORAGE_KEY);
     setMessages(loadMessages());
   };

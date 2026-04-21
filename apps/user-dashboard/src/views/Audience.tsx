@@ -17,12 +17,17 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAudienceData } from '@/context/AudienceDataContext';
+import { useSubscription } from '@/context/SubscriptionContext';
+import { getApiBaseUrl } from '@/lib/backend-api';
 import { CustomerProfile, CommunicationEvent, ChurnSegment } from '@/types';
 import { CHURN_LABEL, LIFECYCLE_LABEL } from '@/lib/scoring';
 
 export function Audience() {
   const { clients, importExcelFile, downloadTemplate, resetToDemo, importError, lastImportInfo } =
     useAudienceData();
+  const { has, subscription } = useSubscription();
+  const apiOn = !!getApiBaseUrl();
+  const excelLocked = apiOn && subscription !== null && !has('excelImport');
   const fileRef = useRef<HTMLInputElement>(null);
   const [selectedUser, setSelectedUser] = useState<CustomerProfile | null>(clients[0] || null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -94,8 +99,21 @@ export function Audience() {
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => fileRef.current?.click()}
-              className="flex-1 min-w-[120px] inline-flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg bg-[#3b82f6]/15 text-[#3b82f6] border border-[#3b82f6]/25 text-[11px] font-semibold hover:bg-[#3b82f6]/25"
+              onClick={() => {
+                if (excelLocked) return;
+                fileRef.current?.click();
+              }}
+              title={
+                excelLocked
+                  ? 'Импорт Excel доступен с тарифа Starter'
+                  : 'Загрузить контакты из Excel'
+              }
+              className={cn(
+                'flex-1 min-w-[120px] inline-flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg border text-[11px] font-semibold transition-colors',
+                excelLocked
+                  ? 'bg-zinc-800/50 text-zinc-500 border-zinc-700 cursor-not-allowed'
+                  : 'bg-[#3b82f6]/15 text-[#3b82f6] border-[#3b82f6]/25 hover:bg-[#3b82f6]/25'
+              )}
             >
               <Upload className="w-3.5 h-3.5" />
               Excel
@@ -117,6 +135,14 @@ export function Audience() {
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
           </div>
+          {excelLocked ? (
+            <p className="text-[11px] text-amber-200/90">
+              Импорт Excel недоступен на пробном тарифе.{' '}
+              <Link href="/billing" className="text-violet-300 underline underline-offset-2">
+                Тарифы
+              </Link>
+            </p>
+          ) : null}
           {importError && <p className="text-[11px] text-red-400">{importError}</p>}
           {lastImportInfo && !importError && (
             <p className="text-[11px] text-[#10b981]">{lastImportInfo}</p>

@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronRight,
 } from 'lucide-react';
+import { getApiBaseUrl, jsonSuperHeaders, superFetchHeaders } from '@/lib/backend-api';
 import { cn } from '@/lib/utils';
 import {
   ONBOARDING_QUEUE,
@@ -33,29 +34,64 @@ function nextStage(s: OnboardingStage): OnboardingStage | null {
 }
 
 export function SuperOnboarding() {
+  const apiBase = getApiBaseUrl();
   const [stages, setStages] = useState<Record<string, OnboardingStage>>({});
+  const [apiRows, setApiRows] = useState<OnboardingRow[] | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!apiBase) return;
+    try {
+      const r = await fetch(`${apiBase}/v1/super/onboarding`, { headers: superFetchHeaders() });
+      if (r.ok) {
+        const data = (await r.json()) as OnboardingRow[];
+        if (Array.isArray(data)) setApiRows(data);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [apiBase]);
 
   useEffect(() => {
+    if (apiBase) {
+      void refresh();
+      return;
+    }
     setStages(readOnboardingStages());
-  }, []);
+    setApiRows(null);
+  }, [apiBase, refresh]);
 
   const rows = useMemo(() => {
+    if (apiRows) return apiRows;
     return ONBOARDING_QUEUE.map((r) => ({
       ...r,
       stage: stages[r.id] ?? r.stage,
     }));
-  }, [stages]);
+  }, [apiRows, stages]);
 
-  const advance = useCallback((id: string, row: OnboardingRow) => {
-    setStages((prev) => {
-      const current = prev[id] ?? row.stage;
+  const advance = useCallback(
+    (id: string, row: OnboardingRow) => {
+      const current = row.stage;
       const n = nextStage(current);
-      if (!n) return prev;
-      const base = { ...prev, [id]: n };
-      writeOnboardingStages(base);
-      return base;
-    });
-  }, []);
+      if (!n) return;
+      if (apiBase) {
+        void (async () => {
+          await fetch(`${apiBase}/v1/super/onboarding/${id}/stage`, {
+            method: 'PATCH',
+            headers: jsonSuperHeaders(),
+            body: JSON.stringify({ stage: n }),
+          }).catch(() => {});
+          await refresh();
+        })();
+        return;
+      }
+      setStages((prev) => {
+        const base = { ...prev, [id]: n };
+        writeOnboardingStages(base);
+        return base;
+      });
+    },
+    [apiBase, refresh]
+  );
 
   return (
     <div className="sa-page flex-1 min-h-0 overflow-y-auto w-full max-w-6xl mx-auto px-4 sm:px-8 lg:px-10 py-8 space-y-8">
@@ -173,8 +209,14 @@ export function SuperOnboarding() {
       </div>
 
       <p className="text-xs text-zinc-600 max-w-3xl">
-        Демо: этапы в <span className="font-mono">localStorage</span> (
-        <span className="font-mono text-[10px]">super_onboarding_stages</span>).
+        {apiBase ? (
+          <>Этапы синхронизируются с Nest API.</>
+        ) : (
+          <>
+            Демо: этапы в <span className="font-mono">localStorage</span> (
+            <span className="font-mono text-[10px]">super_onboarding_stages</span>).
+          </>
+        )}
       </p>
     </div>
   );

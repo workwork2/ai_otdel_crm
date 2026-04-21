@@ -15,12 +15,23 @@ import {
   MessageSquare,
   BookOpen,
   Headphones,
+  Lock,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { ImpersonationBanner } from '@/components/shell/ImpersonationBanner';
+import type { PlanEntitlements } from '@/context/SubscriptionContext';
+import { useSubscriptionOptional } from '@/context/SubscriptionContext';
 
-const navGroups = [
+type NavItem = {
+  href: string;
+  icon: typeof LayoutGrid;
+  label: string;
+  /** Если на тарифе нет функции — ведём в «Мой тариф». */
+  feature?: keyof PlanEntitlements;
+};
+
+const navGroups: { title: string; items: NavItem[] }[] = [
   {
     title: 'ОСНОВНОЕ',
     items: [
@@ -32,14 +43,14 @@ const navGroups = [
   {
     title: 'АНАЛИТИКА И СВЯЗЬ',
     items: [
-      { href: '/qa', icon: MessageSquare, label: 'Диалоги ИИ' },
-      { href: '/analytics', icon: BarChart2, label: 'Отчёты' },
+      { href: '/qa', icon: MessageSquare, label: 'Диалоги ИИ', feature: 'qaFullAccess' },
+      { href: '/analytics', icon: BarChart2, label: 'Отчёты', feature: 'analyticsAdvanced' },
     ],
   },
   {
     title: 'СИСТЕМА',
     items: [
-      { href: '/integrations', icon: Waypoints, label: 'Интеграции' },
+      { href: '/integrations', icon: Waypoints, label: 'Интеграции', feature: 'integrationsManage' },
       { href: '/settings', icon: Settings, label: 'Настройки ИИ' },
       { href: '/billing', icon: CreditCard, label: 'Мой тариф' },
     ],
@@ -55,6 +66,7 @@ const navGroups = [
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const sub = useSubscriptionOptional();
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/';
@@ -71,12 +83,23 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             <Radio className="w-4 h-4 text-[#3b82f6] shrink-0" aria-hidden />
             <span className="text-[12px] sm:text-[13px] font-bold text-white tracking-wide truncate">
               AI Отдел
-              <span className="text-[#a1a1aa] font-medium ml-1 hidden sm:inline">· платформа</span>
+              <span className="text-[#a1a1aa] font-medium ml-1 hidden sm:inline">
+                · лояльность и ИИ-касания
+              </span>
             </span>
           </div>
         </div>
 
-        <div aria-hidden className="min-w-0" />
+        <div className="flex justify-end items-center min-w-0 pr-1">
+          {!sub?.loading && sub?.subscription ? (
+            <span
+              className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md border border-violet-500/35 text-violet-300 truncate max-w-[min(160px,28vw)]"
+              title={sub.subscription.planLabel}
+            >
+              {sub.subscription.planLabel}
+            </span>
+          ) : null}
+        </div>
       </header>
 
       <ImpersonationBanner />
@@ -101,27 +124,36 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 </div>
                 {group.items.map((item) => {
                   const Icon = item.icon;
-                  const active = isActive(item.href);
+                  const locked =
+                    !!item.feature &&
+                    !!sub?.subscription &&
+                    !sub.loading &&
+                    !sub.has(item.feature);
+                  const href = locked ? '/billing' : item.href;
+                  const active = !locked && isActive(item.href);
                   return (
                     <Link
                       key={item.href}
-                      href={item.href}
+                      href={href}
+                      title={locked ? 'Нужен более высокий тариф — откроется раздел оплаты' : undefined}
                       className={cn(
                         'whitespace-nowrap md:w-full flex items-center px-3 md:px-4 py-2 md:py-2.5 rounded-lg transition-all duration-200',
-                        active
+                        active && !locked
                           ? 'bg-[#1f1f22] text-white'
-                          : 'text-[#a1a1aa] hover:text-[#d4d4d8] hover:bg-[#121214]'
+                          : 'text-[#a1a1aa] hover:text-[#d4d4d8] hover:bg-[#121214]',
+                        locked && 'opacity-80'
                       )}
                     >
                       <Icon
                         className={cn(
                           'w-5 h-5 flex-shrink-0 transition-colors',
-                          active ? 'text-white' : 'text-[#71717a]'
+                          active && !locked ? 'text-white' : 'text-[#71717a]'
                         )}
-                        strokeWidth={active ? 2 : 1.5}
+                        strokeWidth={active && !locked ? 2 : 1.5}
                       />
-                      <span className="ml-2 md:ml-3 text-[13px] md:text-[14px] font-medium">
+                      <span className="ml-2 md:ml-3 text-[13px] md:text-[14px] font-medium flex items-center gap-1.5">
                         {item.label}
+                        {locked ? <Lock className="w-3 h-3 text-amber-500/90 shrink-0" /> : null}
                       </span>
                     </Link>
                   );

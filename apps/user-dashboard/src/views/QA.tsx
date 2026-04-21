@@ -1,6 +1,6 @@
 'use client';
 
-import React, { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import React, { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Hand,
   CheckCircle,
@@ -12,9 +12,14 @@ import {
   Send,
   UserCircle2,
 } from 'lucide-react';
+import { getApiBaseUrl, getTenantIdClient, jsonTenantHeaders, tenantFetchHeaders } from '@/lib/backend-api';
+import { apiFetchJson } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 import { mockAIDialogues } from '@/data';
 import type { QAChannel, QADialogue, QADialogueMessage, QADialogueStatus } from '@/types';
+import { useSubscription } from '@/context/SubscriptionContext';
+import { pushToast } from '@/lib/toast';
+import Link from 'next/link';
 
 const QA_STORAGE = 'aura-qa-dialogues-v1';
 
@@ -59,20 +64,88 @@ function statusColor(status: QADialogueStatus): string {
 }
 
 export function QA() {
-  const [dialogues, setDialogues] = useState<QADialogue[]>(loadDialogues);
-  const [selectedId, setSelectedId] = useState<string>(() => loadDialogues()[0]?.id ?? '');
+  const apiBase = getApiBaseUrl();
+  const { has, subscription } = useSubscription();
+  const qaFull = !subscription || has('qaFullAccess');
+  const [tenantId, setTenantId] = useState(() => getTenantIdClient());
+  const skipNextRemotePersist = useRef(true);
+
+  useEffect(() => {
+    const sync = () => setTenantId(getTenantIdClient());
+    sync();
+    window.addEventListener('focus', sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener('focus', sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
+
+  const [dialogues, setDialogues] = useState<QADialogue[]>(() =>
+    getApiBaseUrl() ? [] : loadDialogues()
+  );
+  const [selectedId, setSelectedId] = useState<string>(() =>
+    getApiBaseUrl() ? '' : loadDialogues()[0]?.id ?? ''
+  );
   const [search, setSearch] = useState('');
   const [channelFilter, setChannelFilter] = useState<QAChannel | 'all'>('all');
   const [statusFilter, setStatusFilter] = useState<QADialogueStatus | 'all'>('all');
   const [draft, setDraft] = useState('');
+  const [hydratedFromApi, setHydratedFromApi] = useState(() => !getApiBaseUrl());
 
   useEffect(() => {
+    if (!apiBase) {
+      setHydratedFromApi(true);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const res = await apiFetchJson<QADialogue[]>(`${apiBase}/v1/tenant/${tenantId}/qa`, {
+        headers: tenantFetchHeaders(),
+        retries: 2,
+        silent: true,
+      });
+      if (cancelled) return;
+      if (res.ok && Array.isArray(res.data)) {
+        skipNextRemotePersist.current = true;
+        setDialogues(res.data.length > 0 ? res.data : mockAIDialogues);
+      } else {
+        if (!res.ok && res.error) pushToast(`QA: ${res.error}`, 'error');
+        skipNextRemotePersist.current = true;
+        setDialogues(loadDialogues());
+      }
+      if (!cancelled) setHydratedFromApi(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, tenantId]);
+
+  useEffect(() => {
+    if (!hydratedFromApi) return;
     try {
       localStorage.setItem(QA_STORAGE, JSON.stringify(dialogues));
     } catch {
       /* quota */
     }
-  }, [dialogues]);
+  }, [dialogues, hydratedFromApi]);
+
+  useEffect(() => {
+    if (!apiBase || !hydratedFromApi) return;
+    if (skipNextRemotePersist.current) {
+      skipNextRemotePersist.current = false;
+      return;
+    }
+    const t = setTimeout(() => {
+      void apiFetchJson(`${apiBase}/v1/tenant/${tenantId}/qa`, {
+        method: 'PUT',
+        headers: jsonTenantHeaders(),
+        body: JSON.stringify(dialogues),
+        retries: 1,
+      });
+    }, 700);
+    return () => clearTimeout(t);
+  }, [dialogues, apiBase, tenantId, hydratedFromApi]);
 
   const sorted = useMemo(
     () => [...dialogues].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1)),
@@ -136,6 +209,10 @@ export function QA() {
   }, [navigateList]);
 
   const intercept = (id: string) => {
+    if (!qaFull) {
+      pushToast('Перехват диалогов доступен с полным QA (тариф Starter и выше)', 'error');
+      return;
+    }
     setDialogues((prev) =>
       prev.map((d) =>
         d.id === id
@@ -166,6 +243,7 @@ export function QA() {
   };
 
   const sendManagerMessage = () => {
+    if (!qaFull) return;
     if (!selected || selected.status !== 'intercepted') return;
     const text = draft.trim();
     if (!text) return;
@@ -191,12 +269,20 @@ export function QA() {
     setDraft('');
   };
 
-  const showComposer = selected?.status === 'intercepted';
+  const showComposer = qaFull && selected?.status === 'intercepted';
 
   return (
     <div className="flex flex-1 min-h-0 h-full font-sans">
       <div className="w-[340px] flex flex-col border-r border-[#1f1f22] bg-[#0a0a0c] shrink-0">
         <div className="p-4 border-b border-[#1f1f22] space-y-3">
+          {!qaFull && subscription ? (
+            <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100/90 leading-snug">
+              Пробный тариф: просмотр диалогов без перехвата.{' '}
+              <Link href="/billing" className="text-amber-200 underline underline-offset-2">
+                Повысить тариф
+              </Link>
+            </div>
+          ) : null}
           <div className="flex items-start justify-between gap-2">
             <div>
               <h2 className="text-lg font-semibold text-white">Диалоги ИИ</h2>
@@ -357,7 +443,13 @@ export function QA() {
                   <button
                     type="button"
                     onClick={() => intercept(selected.id)}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-[#3b82f6]/15 text-[#3b82f6] border border-[#3b82f6]/30 hover:bg-[#3b82f6]/25 rounded-lg text-sm font-semibold"
+                    disabled={!qaFull}
+                    title={
+                      !qaFull
+                        ? 'Доступно с тарифа Starter (полный QA)'
+                        : 'Перехватить диалог для ответа менеджера'
+                    }
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-[#3b82f6]/15 text-[#3b82f6] border border-[#3b82f6]/30 hover:bg-[#3b82f6]/25 rounded-lg text-sm font-semibold disabled:opacity-40 disabled:pointer-events-none"
                   >
                     <Hand className="w-4 h-4" />
                     Перехватить диалог

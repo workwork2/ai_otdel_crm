@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { getApiBaseUrl, getTenantIdClient, jsonTenantHeaders, tenantFetchHeaders } from '@/lib/backend-api';
 import {
   ToggleLeft,
   ToggleRight,
@@ -17,9 +18,12 @@ import {
   Gift,
   Loader2,
 } from 'lucide-react';
+import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { refineMarketingCopy } from '@/lib/aiAssist';
 import type { DiscountRule, PromotionItem } from '@/types';
+import { useSubscription } from '@/context/SubscriptionContext';
+import { pushToast } from '@/lib/toast';
 
 const STORAGE_KEY = 'aura-ai-brain-v1';
 
@@ -89,14 +93,58 @@ function loadState(): BrainState {
 }
 
 export function AIBrain() {
+  const { has, subscription } = useSubscription();
+  const canRefine = !subscription || has('aiRefineCopy');
+  const [tenantId, setTenantId] = useState(() => getTenantIdClient());
   const [state, setState] = useState<BrainState>(defaultState);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setState(loadState());
+    const sync = () => setTenantId(getTenantIdClient());
+    sync();
+    window.addEventListener('focus', sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener('focus', sync);
+      window.removeEventListener('storage', sync);
+    };
   }, []);
+
+  useEffect(() => {
+    const base = getApiBaseUrl();
+    if (!base) {
+      setState(loadState());
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`${base}/v1/tenant/${tenantId}/brain`, {
+          headers: tenantFetchHeaders(),
+        });
+        if (cancelled) return;
+        if (r.ok) {
+          const b = (await r.json()) as Partial<BrainState>;
+          const def = defaultState();
+          setState({
+            ...def,
+            ...b,
+            discounts: Array.isArray(b.discounts) ? b.discounts : def.discounts,
+            promotions: Array.isArray(b.promotions) ? b.promotions : def.promotions,
+          });
+        } else {
+          setState(loadState());
+        }
+      } catch {
+        if (!cancelled) setState(loadState());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId]);
 
   const persist = useCallback((next: BrainState) => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
@@ -105,6 +153,14 @@ export function AIBrain() {
 
   const handleSave = () => {
     persist(state);
+    const base = getApiBaseUrl();
+    if (base) {
+      void fetch(`${base}/v1/tenant/${tenantId}/brain`, {
+        method: 'PUT',
+        headers: jsonTenantHeaders(),
+        body: JSON.stringify(state),
+      }).catch(() => {});
+    }
   };
 
   const onPromptFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -123,6 +179,10 @@ export function AIBrain() {
     key: 'systemPrompt' | 'brandVoicePrompt',
     instruction: string
   ) => {
+    if (!canRefine) {
+      pushToast('ИИ-доработка текстов доступна с тарифа Starter и выше', 'error');
+      return;
+    }
     const field = key;
     setAiLoading(field);
     const { text, error } = await refineMarketingCopy(instruction, state[field]);
@@ -132,6 +192,10 @@ export function AIBrain() {
   };
 
   const refineDiscountDesc = async (id: string) => {
+    if (!canRefine) {
+      pushToast('ИИ-доработка текстов доступна с тарифа Starter и выше', 'error');
+      return;
+    }
     const row = state.discounts.find((d) => d.id === id);
     if (!row) return;
     setAiLoading(`d-${id}`);
@@ -147,6 +211,10 @@ export function AIBrain() {
   };
 
   const refinePromotionBody = async (id: string) => {
+    if (!canRefine) {
+      pushToast('ИИ-доработка текстов доступна с тарифа Starter и выше', 'error');
+      return;
+    }
     const row = state.promotions.find((p) => p.id === id);
     if (!row) return;
     setAiLoading(`p-${id}`);
@@ -198,8 +266,17 @@ export function AIBrain() {
           </h1>
           <p className="text-[#a1a1aa] mt-3 max-w-2xl text-[15px] leading-relaxed">
             Промпты, скидки и акции попадают в контекст модели: так ИИ говорит в голосе бренда и не
-            нарушает ваши правила. Тексты можно править вручную или дорабатывать через ИИ (Gemini).
+            нарушает ваши правила. Тексты можно править вручную или дорабатывать через ИИ (бэкенд:
+            Anthropic, при отсутствии ключа — OpenAI / Gemini).
           </p>
+          {!canRefine && subscription ? (
+            <p className="mt-3 text-sm text-amber-200/90 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 max-w-2xl">
+              Кнопки «Доработать с ИИ» отключены на пробном тарифе.{' '}
+              <Link href="/billing" className="text-amber-200 underline underline-offset-2">
+                Сменить тариф
+              </Link>
+            </p>
+          ) : null}
         </div>
         <div className="flex items-center gap-3 shrink-0">
           {savedAt && (
@@ -248,7 +325,7 @@ export function AIBrain() {
             <label className="text-sm font-medium text-[#d4d4d8]">Системный промпт</label>
             <button
               type="button"
-              disabled={!!aiLoading}
+              disabled={!!aiLoading || !canRefine}
               onClick={() =>
                 refineField(
                   'systemPrompt',
@@ -279,7 +356,7 @@ export function AIBrain() {
             <label className="text-sm font-medium text-[#d4d4d8]">Голос бренда</label>
             <button
               type="button"
-              disabled={!!aiLoading}
+              disabled={!!aiLoading || !canRefine}
               onClick={() =>
                 refineField(
                   'brandVoicePrompt',
@@ -414,7 +491,7 @@ export function AIBrain() {
                       <button
                         type="button"
                         title="Доработать с ИИ"
-                        disabled={!!aiLoading}
+                        disabled={!!aiLoading || !canRefine}
                         onClick={() => refineDiscountDesc(d.id)}
                         className="p-2 rounded-lg hover:bg-[#1f1f22] text-[#8b5cf6]"
                       >
@@ -545,7 +622,7 @@ export function AIBrain() {
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
-                  disabled={!!aiLoading}
+                  disabled={!!aiLoading || !canRefine}
                   onClick={() => refinePromotionBody(p.id)}
                   className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-[#8b5cf6] hover:bg-[#8b5cf6]/10"
                 >

@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Brain, AlertTriangle, Save } from 'lucide-react';
+import { getApiBaseUrl, jsonSuperHeaders, superFetchHeaders } from '@/lib/backend-api';
 import { cn } from '@/lib/utils';
 import {
   AI_ERROR_LOGS,
@@ -18,19 +19,67 @@ const KIND_LABEL: Record<AIErrorLogRow['kind'], string> = {
 };
 
 export function SuperAIHub() {
-  const [prompt, setPrompt] = useState('');
+  const apiBase = getApiBaseUrl();
+  const [prompt, setPrompt] = useState(DEFAULT_MASTER_PROMPT);
   const [saved, setSaved] = useState(false);
+  const [aiLogs, setAiLogs] = useState<AIErrorLogRow[]>(AI_ERROR_LOGS);
+
+  const refreshLogs = useCallback(async () => {
+    if (!apiBase) {
+      setAiLogs(AI_ERROR_LOGS);
+      return;
+    }
+    try {
+      const r = await fetch(`${apiBase}/v1/super/ai-errors`, { headers: superFetchHeaders() });
+      if (r.ok) {
+        const data = (await r.json()) as AIErrorLogRow[];
+        if (Array.isArray(data)) setAiLogs(data);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [apiBase]);
 
   useEffect(() => {
+    void refreshLogs();
+  }, [refreshLogs]);
+
+  useEffect(() => {
+    if (apiBase) {
+      void (async () => {
+        try {
+          const r = await fetch(`${apiBase}/v1/super/master-prompt`, { headers: superFetchHeaders() });
+          if (r.ok) {
+            const j = (await r.json()) as { prompt?: string };
+            if (j.prompt) setPrompt(j.prompt);
+          }
+        } catch {
+          /* ignore */
+        }
+      })();
+      return;
+    }
     try {
       const s = localStorage.getItem(MASTER_PROMPT_KEY);
       setPrompt(s || DEFAULT_MASTER_PROMPT);
     } catch {
       setPrompt(DEFAULT_MASTER_PROMPT);
     }
-  }, []);
+  }, [apiBase]);
 
   const savePrompt = () => {
+    if (apiBase) {
+      void (async () => {
+        await fetch(`${apiBase}/v1/super/master-prompt`, {
+          method: 'PUT',
+          headers: jsonSuperHeaders(),
+          body: JSON.stringify({ prompt }),
+        }).catch(() => {});
+        setSaved(true);
+        window.setTimeout(() => setSaved(false), 2000);
+      })();
+      return;
+    }
     try {
       localStorage.setItem(MASTER_PROMPT_KEY, prompt);
       setSaved(true);
@@ -76,7 +125,13 @@ export function SuperAIHub() {
           className="w-full resize-y rounded-xl border border-[#27272a] bg-[#0a0a0c] text-[13px] text-[#e4e4e7] leading-relaxed px-4 py-3 outline-none focus:border-amber-600/50 font-mono"
         />
         <p className="text-xs text-[#71717a]">
-          Хранится в браузере (<span className="font-mono">{MASTER_PROMPT_KEY}</span>), для демо без бэкенда.
+          {apiBase ? (
+            <>Синхронизируется с API (эндпоинт master-prompt).</>
+          ) : (
+            <>
+              Хранится в браузере (<span className="font-mono">{MASTER_PROMPT_KEY}</span>).
+            </>
+          )}
         </p>
       </section>
 
@@ -97,7 +152,7 @@ export function SuperAIHub() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#1f1f22]">
-              {AI_ERROR_LOGS.map((row) => (
+              {aiLogs.map((row) => (
                 <tr key={row.id} className="hover:bg-[#121214]/50">
                   <td className="px-4 py-3 text-[#a1a1aa] tabular-nums whitespace-nowrap">
                     {new Date(row.at).toLocaleString('ru-RU')}
