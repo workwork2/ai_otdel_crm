@@ -1,0 +1,55 @@
+@use 'tokens' as *;
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: $bg;
+  color: $text;
+  font-family: $font-sans;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+
+  &::selection {
+    background: $border;
+    color: $white;
+  }
+}
+
+/* Нативные поля: единый тёмный вид (Safari/Chrome иначе дают белый фон). */
+input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='range']):not([type='color']),
+textarea,
+select {
+  color-scheme: dark;
+  background-color: $panel;
+  color: $text;
+  border-color: $border-hover;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: $text-dim;
+}
+
+select {
+  background-image: none;
+}
+
+select option {
+  background-color: $panel;
+  color: $text;
+}

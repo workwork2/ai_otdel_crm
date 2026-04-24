@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "status": "draft",
+  "target": "marketing",
+  "planText": "Стратегия (демо-превью)\n\n1) Сегмент: клиенты в зоне риска и с согласием на маркетинг — персональные касания без «спама».\n2) Ритм: равномерное распределение по 5 дням, не чаще одного письма в день на контакт.\n3) Тон: тёплый, на «вы», акцент на ценность и помощь; офферы только из настроек ИИ.\n4) Метрика: открытия и ответы фиксируются в CRM; ответы вести в «Диалогах ИИ».\n\nЭтот текст можно править вручную до сохранения плана.",
+  "baseSubject": "Мы скучали по вам — персональное предложение",
+  "baseBodyText": "Здравствуйте!\n\nПодготовили для вас предложение с учётом ваших прошлых заказов. Если удобно — ответьте на это письмо.\n\nС уважением, команда",
+  "recipientIds": ["demo-c-1", "demo-c-2", "demo-c-3", "demo-c-4", "demo-c-5", "demo-c-6", "demo-c-7", "demo-c-8"],
+  "updatedAt": 0,
+  "slots": [
+    {
+      "id": "demo-slot-1",
+      "customerId": "demo-c-1",
+      "email": "anna.volkhova@example.com",
+      "customerName": "Анна Волкова",
+      "scheduledAt": "2026-04-21T09:00:00.000Z",
+      "subject": "Анна, возвращаемся с выгодой для вас",
+      "bodyText": "Здравствуйте, Анна!\n\nМы заметили, что вы давно не заходили. Подготовили персональное предложение — срок действия ограничен.\n\nКоманда сервиса",
+      "status": "sent",
+      "personalizedByAi": true
+    },
+    {
+      "id": "demo-slot-2",
+      "customerId": "demo-c-2",
+      "email": "boris.k@example.com",
+      "customerName": "Борис Ким",
+      "scheduledAt": "2026-04-21T14:30:00.000Z",
+      "subject": "Борис, напоминаем о бонусах",
+      "bodyText": "Здравствуйте, Борис!\n\nНакопленные бонусы ждут — можно списать при следующем заказе.\n\nС уважением",
+      "status": "sent",
+      "personalizedByAi": true
+    },
+    {
+      "id": "demo-slot-3",
+      "customerId": "demo-c-3",
+      "email": "elena.m@example.com",
+      "customerName": "Елена Морозова",
+      "scheduledAt": "2026-04-22T10:15:00.000Z",
+      "subject": "Елена, ваш персональный подбор",
+      "bodyText": "Здравствуйте, Елена!\n\nИИ подобрал варианты по вашим прошлым покупкам — коротко и по делу.\n\nКоманда",
+      "status": "pending",
+      "personalizedByAi": true
+    },
+    {
+      "id": "demo-slot-4",
+      "customerId": "demo-c-4",
+      "email": "dmitry.sokolov@example.com",
+      "customerName": "Дмитрий Соколов",
+      "scheduledAt": "2026-04-22T16:00:00.000Z",
+      "subject": "Дмитрий — скидка по вашему сегменту",
+      "bodyText": "Здравствуйте, Дмитрий!\n\nДля вашей группы клиентов доступна скидка из настроек кампании.\n\nХорошего дня",
+      "status": "pending",
+      "personalizedByAi": true
+    },
+    {
+      "id": "demo-slot-5",
+      "customerId": "demo-c-5",
+      "email": "marina.p@example.com",
+      "customerName": "Марина Павлова",
+      "scheduledAt": "2026-04-23T11:45:00.000Z",
+      "subject": "Марина, мы на связи",
+      "bodyText": "Здравствуйте, Марина!\n\nЕсли нужна помощь с заказом — ответьте на письмо.\n\nС уважением",
+      "status": "pending",
+      "personalizedByAi": false
+    },
+    {
+      "id": "demo-slot-6",
+      "customerId": "demo-c-6",
+      "email": "igor.n@example.com",
+      "customerName": "Игорь Новиков",
+      "scheduledAt": "2026-04-24T09:30:00.000Z",
+      "subject": "Игорь, актуальные акции",
+      "bodyText": "Здравствуйте, Игорь!\n\nКратко о текущих акциях из вашего кабинета ИИ.\n\nКоманда",
+      "status": "pending",
+      "personalizedByAi": true
+    },
+    {
+      "id": "demo-slot-7",
+      "customerId": "demo-c-7",
+      "email": "svetlana.l@example.com",
+      "customerName": "Светлана Лебедева",
+      "scheduledAt": "2026-04-24T15:20:00.000Z",
+      "subject": "Светлана — персональное напоминание",
+      "bodyText": "Здравствуйте, Светлана!\n\nНапоминаем о брошенной корзине и промокоде.\n\nС уважением",
+      "status": "failed",
+      "lastError": "SMTP timeout (демо)",
+      "personalizedByAi": true
+    },
+    {
+      "id": "demo-slot-8",
+      "customerId": "demo-c-8",
+      "email": "oleg.v@example.com",
+      "customerName": "Олег Васильев",
+      "scheduledAt": "2026-04-25T12:00:00.000Z",
+      "subject": "Олег, спасибо что с нами",
+      "bodyText": "Здравствуйте, Олег!\n\nБлагодарим за лояльность — держите персональное предложение.\n\nКоманда",
+      "status": "skipped_limit",
+      "personalizedByAi": true
+    }
+  ]
+}

@@ -22,6 +22,7 @@ import { TenantPortalGuard } from '../auth/tenant-portal.guard';
 import {
   buildRetentionEmailContent,
   filterCustomersForEmailCampaign,
+  plainTextToRetentionHtml,
   type RetentionTarget,
 } from '../mail/retention-audience';
 import { MailService } from '../mail/mail.service';
@@ -37,6 +38,7 @@ import {
   mergeIntegrationsPreserveSecrets,
   type IntegrationRow,
 } from '../integrations/integration-helpers';
+import { OutreachService } from '../outreach/outreach.service';
 import { StoreService } from '../store/store.service';
 import type { JsonRecord, TenantWorkspace } from '../store/store.types';
 
@@ -46,7 +48,8 @@ export class TenantController {
   constructor(
     private readonly store: StoreService,
     private readonly ai: AiService,
-    private readonly mail: MailService
+    private readonly mail: MailService,
+    private readonly outreach: OutreachService
   ) {}
 
   /** Рассылки: тариф + канал Email подключён + SMTP (в карточке Email или глобально в API). */
@@ -310,19 +313,82 @@ export class TenantController {
     return { ok: true };
   }
 
+  /** Персональная кампания: план, слоты, лимиты биллинга (см. POST generate / start). */
+  @Get('outreach/campaign')
+  outreachCampaignGet(@Param('tenantId') tenantId: string) {
+    return this.outreach.getCampaignView(tenantId);
+  }
+
+  @Post('outreach/generate')
+  async outreachGenerate(
+    @Param('tenantId') tenantId: string,
+    @Body()
+    body: {
+      target?: RetentionTarget;
+      recipientIds?: string[];
+      baseSubject?: string;
+      baseBodyText?: string;
+    }
+  ) {
+    return this.outreach.generateCampaign(tenantId, body);
+  }
+
+  @Put('outreach/campaign')
+  outreachCampaignPut(
+    @Param('tenantId') tenantId: string,
+    @Body()
+    body: {
+      planText?: string;
+      baseSubject?: string;
+      baseBodyText?: string;
+      slots?: Array<{
+        id: string;
+        scheduledAt?: string;
+        subject?: string;
+        bodyText?: string;
+      }>;
+    }
+  ) {
+    return this.outreach.putCampaign(tenantId, body);
+  }
+
+  @Post('outreach/start')
+  outreachStart(@Param('tenantId') tenantId: string) {
+    return this.outreach.startCampaign(tenantId);
+  }
+
+  @Post('outreach/pause')
+  outreachPause(@Param('tenantId') tenantId: string) {
+    return this.outreach.pauseCampaign(tenantId);
+  }
+
   /** Рассылка удержания: когорта из CRM или все с маркетинговым согласием. */
   @Post('email/retention-campaign')
   async sendRetentionCampaign(
     @Param('tenantId') tenantId: string,
-    @Body() body: { target?: RetentionTarget; limit?: number; dryRun?: boolean }
+    @Body()
+    body: {
+      target?: RetentionTarget;
+      limit?: number;
+      dryRun?: boolean;
+      /** Если задано — только эти id (пересечение с отбором по сегменту). */
+      recipientIds?: string[];
+      /** Своя тема и текст письма вместо сценария автоматизаций. */
+      customContent?: { subject?: string; text?: string };
+    }
   ) {
     const w = this.workspaceForEmailCampaigns(tenantId);
     const tenantSmtp = getTenantSmtpFromWorkspace(w);
     const target: RetentionTarget = body?.target === 'marketing' ? 'marketing' : 'retention';
     const limit = Math.min(500, Math.max(1, Number(body?.limit) || 50));
     const dryRun = !!body?.dryRun;
-    const recipients = filterCustomersForEmailCampaign(w.customers, target).slice(0, limit);
-    const content = buildRetentionEmailContent(w);
+    let recipients = filterCustomersForEmailCampaign(w.customers, target);
+    const idFilter = body?.recipientIds;
+    if (Array.isArray(idFilter) && idFilter.length > 0) {
+      const allow = new Set(idFilter.map((x) => String(x)));
+      recipients = recipients.filter((r) => allow.has(r.id));
+    }
+    recipients = recipients.slice(0, limit);
 
     if (dryRun) {
       return {
@@ -332,6 +398,18 @@ export class TenantController {
         sampleEmails: recipients.map((r) => r.email),
       };
     }
+
+    const cc = body?.customContent;
+    const subj = typeof cc?.subject === 'string' ? cc.subject.trim() : '';
+    const txt = typeof cc?.text === 'string' ? cc.text.trim() : '';
+    const content =
+      subj.length >= 1 && txt.length >= 1
+        ? {
+            subject: subj.slice(0, 300),
+            text: txt.slice(0, 50_000),
+            html: plainTextToRetentionHtml(txt.slice(0, 50_000)),
+          }
+        : buildRetentionEmailContent(w);
 
     if (recipients.length === 0) {
       throw new BadRequestException(

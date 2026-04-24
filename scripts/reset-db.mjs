@@ -59,9 +59,9 @@ try {
 Готово: таблицы очищены.
 
 1) Перезапустите API:  npm run dev:api
-2) Супер-админка → /login → bootstrap (первый админ) → «Все организации» → создайте tenant → пароль портала
+2) Control Plane → http://localhost:3000/platform/login → bootstrap (первый админ) → «Все организации» → создайте tenant → пароль портала
 3) Клиентская панель → /login с новым tenant id
-4) (Рекомендуется) Увеличьте NEXT_PUBLIC_SESSION_EPOCH в .env.local (3000 и 3001) и перезапустите фронты — сброс сессий в браузере.
+4) (Рекомендуется) Увеличьте NEXT_PUBLIC_SESSION_EPOCH в apps/web/.env.local и перезапустите Next — сброс сессий в браузере.
 `);
 } catch (e) {
   await client.query('ROLLBACK').catch(() => {});

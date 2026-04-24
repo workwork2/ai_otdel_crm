@@ -10,6 +10,7 @@ import { PublicController } from './public/public.controller';
 import { StoreModule } from './store/store.module';
 import { SuperController } from './super/super.controller';
 import { TenantController } from './tenant/tenant.controller';
+import { OutreachService } from './outreach/outreach.service';
 
 @Module({
   imports: [
@@ -24,5 +25,6 @@ import { TenantController } from './tenant/tenant.controller';
     AiModule,
   ],
   controllers: [PublicController, TenantController, SuperController, PlatformController],
+  providers: [OutreachService],
 })
 export class AppModule {}

@@ -1,20 +1,18 @@
 {
-  "name": "linearize-ai-workspace",
+  "name": "ai-otdel-workspace",
   "private": true,
   "workspaces": [
-    "apps/user-dashboard",
-    "apps/super-admin",
+    "apps/web",
     "apps/api"
   ],
   "scripts": {
-    "dev": "npm run dev -w user-dashboard",
-    "start": "npm run start -w user-dashboard",
-    "dev:user": "npm run dev -w user-dashboard",
-    "dev:admin": "npm run dev -w super-admin",
+    "dev": "npm run dev -w web",
+    "start": "npm run start -w web",
+    "dev:web": "npm run dev -w web",
+    "dev:api": "npm run api:free-port && node scripts/pg-ping.mjs && npm run start:dev -w tenant-api",
+    "dev:full": "concurrently -n api,web -c blue,cyan \"npm run dev:api\" \"npm run dev:web\"",
     "db:reset": "node scripts/reset-db.mjs",
     "api:free-port": "lsof -ti :3333 | xargs kill 2>/dev/null || true",
-    "dev:api": "npm run api:free-port && node scripts/pg-ping.mjs && npm run start:dev -w api",
-    "dev:full": "concurrently -n api,user,admin -c blue,cyan,magenta \"npm run dev:api\" \"npm run dev:user\" \"npm run dev:admin\"",
     "build": "npm run build --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "docker:build": "docker compose build",

@@ -1,0 +1,12 @@
+/* Источник для одноразовой сборки утилит (см. scripts/regen-static-css.mjs). Не импортируется в приложение. */
+@import 'tailwindcss';
+
+@source '../src/**/*.tsx';
+@source '../src/**/*.ts';
+
+@theme {
+  --font-sans: var(--font-inter), 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --color-zinc-950: #0a0a0c;
+  --color-zinc-900: #121214;
+  --color-zinc-800: #1f1f22;
+}

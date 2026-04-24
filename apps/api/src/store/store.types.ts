@@ -2,6 +2,35 @@ import type { TenantStatus, OnboardingStage } from './seed/super.seed';
 
 export type JsonRecord = Record<string, unknown>;
 
+/** Персональная отложенная рассылка (план + слоты по получателям). */
+export type OutreachSlotStatus = 'pending' | 'sent' | 'failed' | 'skipped_limit';
+
+export interface TenantOutreachSlot {
+  id: string;
+  customerId: string;
+  email: string;
+  customerName: string;
+  /** ISO — когда отправить письмо */
+  scheduledAt: string;
+  subject: string;
+  bodyText: string;
+  status: OutreachSlotStatus;
+  lastError?: string;
+  personalizedByAi: boolean;
+}
+
+export interface TenantOutreachCampaign {
+  version: 1;
+  status: 'draft' | 'running' | 'paused' | 'completed';
+  target: 'retention' | 'marketing';
+  planText: string;
+  baseSubject: string;
+  baseBodyText: string;
+  recipientIds: string[];
+  updatedAt: number;
+  slots: TenantOutreachSlot[];
+}
+
 export interface TenantWorkspace {
   customers: JsonRecord[];
   qaDialogues: JsonRecord[];
@@ -39,6 +68,8 @@ export interface TenantWorkspace {
     images: string[];
     ts: number;
   }>;
+  /** План персональной рассылки и расписание; может отсутствовать у старых воркспейсов. */
+  outreachCampaign?: TenantOutreachCampaign;
 }
 
 export interface SuperSlice {

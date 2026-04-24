@@ -1,0 +1,32 @@
+// Единый источник дизайн-токенов для SCSS. Цвета для Tailwind дублируются в `tw.css` (@theme).
+
+$bg: #0a0a0c;
+$panel: #121214;
+$border: #1f1f22;
+$border-hover: #3f3f46;
+$text: #e4e4e7;
+$text-muted: #a1a1aa;
+$text-dim: #71717a;
+$white: #ffffff;
+$blue: #3b82f6;
+$green: #10b981;
+$amber: #f59e0b;
+$purple: #8b5cf6;
+$cyan: #22d3ee;
+
+$font-sans: var(--font-inter), 'Inter', ui-sans-serif, system-ui, sans-serif;
+$radius: 12px;
+$radius-sm: 8px;
+$sidebar-w: 240px;
+$topbar-h: 48px;
+
+$bp-lg: 1200px;
+$bp-md: 900px;
+$bp-sm: 640px;
+
+:root {
+  --shell-sidebar-w: #{$sidebar-w};
+  --page-pad-x: clamp(1rem, 4vw, 2.5rem);
+  --page-pad-y: clamp(1rem, 3vw, 2rem);
+  --section-gap: clamp(1.25rem, 3vw, 2rem);
+}

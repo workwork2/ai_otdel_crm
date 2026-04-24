@@ -1,0 +1,11 @@
+/*
+ * Точка входа стилей приложения.
+ * Порядок: токены → база → оболочка CRM → тема платформы.
+ * Утилитарные классы в JSX — статический слой `static-utilities.css` (пересборка: `npm run regen:css -w web`).
+ */
+@use 'tokens';
+@use 'base';
+@use 'shell';
+@use 'platform-theme';
+@use 'extras';
+@use 'super-tenants';

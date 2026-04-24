@@ -22,6 +22,7 @@ const WELCOME_SUPPORT = {
 
 function defaultBrain(): TenantWorkspace['brain'] {
   return {
+    businessVertical: 'mixed',
     tone: 50,
     useEmoji: true,
     maxDiscountPercent: 15,

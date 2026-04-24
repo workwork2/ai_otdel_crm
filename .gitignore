@@ -7,3 +7,11 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# IDE / агенты
+.claude/
+
+# TypeScript incremental
+*.tsbuildinfo
+
+# Не держим symlink `src` в корне — код только в apps/*
